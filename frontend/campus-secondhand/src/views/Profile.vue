@@ -34,7 +34,7 @@
           <div class="user-info">
             <h1 class="user-name">
               {{ userInfo.username }}
-              <VerifiedBadge :verified="userInfo.isStudentVerified" size="md" />
+              <VerifiedBadge :verified="userInfo.studentVerified" size="md" />
             </h1>
             <p class="user-bio">{{ userInfo.bio || '这个人很懒，什么都没写~' }}</p>
             <div class="user-meta">
@@ -345,7 +345,7 @@
 
         <!-- 学生认证：未认证显示表单，已认证显示学号与说明 -->
         <div v-if="activeTab === 'verify'" class="verify-panel">
-          <section v-if="isStudentVerified" class="card verify-done">
+          <section v-if="studentVerified" class="card verify-done">
             <div class="verify-done__icon" aria-hidden="true">🎓</div>
             <h3 class="verify-done__title">
               已完成学生认证
@@ -659,6 +659,8 @@ const userInfo = ref({
   avatar: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"%3E%3Ccircle cx="20" cy="20" r="20" fill="%23333"/%3E%3Ccircle cx="20" cy="16" r="6" fill="%23666"/%3E%3Cpath d="M8 36c0-6.6 5.4-12 12-12s12 5.4 12 12" fill="%23666"/%3E%3C/svg%3E',
   bio: '',
   location: '校园',
+  // 显式声明，避免字段长期处于 undefined 中间态导致 computed 读到 null
+  studentVerified: false,
   qq: '',
   wechat: '',
   joinDate: '2025年1月',
@@ -834,7 +836,7 @@ const verifying = ref(false)
 const verifyError = ref('')
 
 /** 认证状态以 userInfo 为准：它来自 /api/user/profile，是服务端确认过的 */
-const isStudentVerified = computed(() => userInfo.value.isStudentVerified === true)
+const studentVerified = computed(() => userInfo.value.studentVerified === true)
 const paging = reactive(
   Object.fromEntries(
     PAGED_TABS.map((id) => [id, { page: 1, size: 10, total: 0 }])
@@ -889,7 +891,7 @@ async function loadUserProfile() {
       userInfo.value.qq = data.qq || ''
       userInfo.value.wechat = data.wechat || ''
       // 认证状态与学号：徽章、认证表单都依赖这三个字段
-      userInfo.value.isStudentVerified = data.isStudentVerified === true
+      userInfo.value.studentVerified = data.studentVerified === true
       userInfo.value.studentNo = data.studentNo || ''
       userInfo.value.realName = data.realName || ''
     }
@@ -951,7 +953,7 @@ async function handleStudentVerify() {
   try {
     const res = await studentVerify(verifyForm.studentNo.trim(), verifyForm.realName.trim())
     if (res.code === 200) {
-      userInfo.value.isStudentVerified = true
+      userInfo.value.studentVerified = true
       userInfo.value.studentNo = res.data?.studentNo || verifyForm.studentNo.trim()
       userInfo.value.realName = res.data?.realName || verifyForm.realName.trim()
       // 徽章只依赖 userInfo，无需改动 Pinia——认证态不是登录态的一部分

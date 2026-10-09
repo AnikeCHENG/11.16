@@ -101,7 +101,7 @@
               <div class="seller-info">
                 <div class="seller-name">
                   {{ seller.username || '卖家' }}
-                  <VerifiedBadge :verified="seller.isStudentVerified" size="sm" />
+                  <VerifiedBadge :verified="seller.studentVerified" size="sm" />
                 </div>
                 <!-- 好评率：SQL 实时聚合，无评价时显示「暂无评价」而不是 0% -->
                 <div v-if="reviewStats.hasReview" class="seller-rating">

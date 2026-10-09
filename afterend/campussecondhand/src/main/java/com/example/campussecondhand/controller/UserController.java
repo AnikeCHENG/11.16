@@ -21,6 +21,23 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/user")
 @CrossOrigin(origins = "*")
+/**
+ * 用户资料与学生认证相关接口。
+ *
+ * <p><b>认证状态字段名统一约定：{@code studentVerified}（布尔）。</b></p>
+ *
+ * <p>这个字段此前在全站有四种写法——本控制器的 {@code /hall-profile} 叫
+ * {@code verified}、{@code /profile} 干脆没返回、{@code /student-verify} 与
+ * {@code /user/{id}} 叫 {@code isStudentVerified}，而
+ * {@code MessageService} 与 {@code OrderService} 又叫 {@code studentVerified}。
+ * 名字一散，每加一处消费点就得先猜对端叫什么，于是真的出了 bug：
+ * Profile.vue 读 {@code data.isStudentVerified}，而 {@code /profile} 返回的是
+ * {@code undefined}，于是认证成功的用户一刷新页面，徽章就消失、认证表单重新出现。</p>
+ *
+ * <p>前端一律读 {@code studentVerified}。新增返回点时请沿用这个名字，
+ * 不要因为实体字段叫 {@code isStudentVerified} 就顺手沿用——那正是
+ * {@code studentVerifiedUser} 这种怪名字的由来。</p>
+ */
 public class UserController {
 
     @Autowired
@@ -63,7 +80,7 @@ public class UserController {
             Map<String, Object> profile = new LinkedHashMap<>();
             profile.put("nickname", user.getUsername());
             profile.put("avatar", user.getAvatar());
-            profile.put("verified", Integer.valueOf(1).equals(user.getIsStudentVerified()));
+            profile.put("studentVerified", Integer.valueOf(1).equals(user.getIsStudentVerified()));
             profile.put("grade", parseGrade(user.getStudentNo()));
             profile.put("stats", postService.countStats(user.getId()));
 
@@ -132,6 +149,11 @@ public class UserController {
             profile.put("wechat", user.getWechat() != null ? user.getWechat() : "");
             profile.put("studentNo", user.getStudentNo() != null ? user.getStudentNo() : "");
             profile.put("realName", user.getRealName() != null ? user.getRealName() : "");
+            // 认证状态此前只补了 studentNo / realName，漏了这个布尔字段，
+            // 而 Profile.vue 读的是 data.isStudentVerified → undefined === true 恒为 false，
+            // 于是认证成功后一刷新页面，徽章消失、认证表单重新出现，
+            // 再提交就撞上后端「已通过学生认证」的 400。
+            profile.put("studentVerified", user.isStudentVerifiedUser());
             return ResponseEntity.ok(ApiResponse.success("获取成功", profile));
         } catch (Exception e) {
             log.error("获取用户资料失败: ", e);
@@ -238,7 +260,7 @@ public class UserController {
             User user = studentVerifyService.verify(userOpt.get().getId(), studentNo, realName);
 
             Map<String, Object> result = new LinkedHashMap<>();
-            result.put("isStudentVerified", true);
+            result.put("studentVerified", true);
             result.put("studentNo", user.getStudentNo());
             // 真实姓名回显给本人，方便确认填错没有
             result.put("realName", user.getRealName());
@@ -286,7 +308,7 @@ public class UserController {
                     "bio", user.getBio() != null ? user.getBio() : "",
                     "location", user.getLocation() != null ? user.getLocation() : "",
                     // 认证徽章需要这个字段；真实姓名属敏感信息，不在公开接口返回
-                    "isStudentVerified", user.isStudentVerifiedUser()
+                    "studentVerified", user.isStudentVerifiedUser()
             )));
         } catch (Exception e) {
             log.error("获取用户信息失败: ", e);

@@ -18,7 +18,7 @@
           </div>
           <h2>
             {{ profile?.nickname }}
-            <VerifiedBadge v-if="profile?.verified" :verified="true" size="sm" />
+            <VerifiedBadge v-if="profile?.studentVerified" :verified="true" size="sm" />
           </h2>
           <p v-if="profile?.grade">{{ profile.grade }}</p>
           <!--
