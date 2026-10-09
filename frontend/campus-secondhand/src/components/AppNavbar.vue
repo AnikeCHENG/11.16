@@ -15,6 +15,7 @@ import { useNotificationStore } from '@/stores/notification'
 import { useCartStore } from '@/stores/cart'
 import { useUserStore } from '@/stores/user'
 import { useMessageNotify } from '@/composables/useMessageNotify'
+import VerifiedBadge from '@/components/VerifiedBadge.vue'
 import { logout } from '@/api/auth'
 
 const route = useRoute()
@@ -173,12 +174,21 @@ onBeforeUnmount(() => {
           >{{ isPublishPage ? '发布中' : '发布' }}</router-link>
 
           <div class="nb-user">
+            <!--
+              学生认证徽章：放在头像左侧而不是叠在头像上做角标。
+              角标会盖住用户头像（任意图片），对比度不可控；左侧方案复用
+              VerifiedBadge 已验证过的样式，也不占右侧布局宽度，5 项导航零位移。
+              showLabel 默认 false，这里只出 🎓 图标 + title + 读屏文本。
+            -->
+            <VerifiedBadge v-if="userStore.studentVerified" :verified="true" size="sm" />
             <button
               class="nb-avatar"
               type="button"
               :aria-expanded="menuOpen"
               aria-haspopup="menu"
-              :aria-label="`账号菜单：${userStore.username || '未登录'}`"
+              :aria-label="userStore.studentVerified
+                ? `账号菜单：${userStore.username || '未登录'}（已通过学生认证）`
+                : `账号菜单：${userStore.username || '未登录'}`"
               @click="menuOpen = !menuOpen"
             >
               <img v-if="userAvatar" :src="userAvatar" :alt="`${userStore.username} 的头像`" />
@@ -392,7 +402,9 @@ onBeforeUnmount(() => {
 }
 
 /* ---------- 头像与下拉 ---------- */
-.nb-user { position: relative; }
+/* position:relative 是给下方 .nb-menu 绝对定位用的；
+   徽章与头像并排靠 inline-flex，徽章出现在前所以显示在头像左侧。 */
+.nb-user { position: relative; display: inline-flex; align-items: center; gap: var(--space-2); }
 .nb-avatar {
   width: 36px; height: 36px;
   display: inline-flex; align-items: center; justify-content: center;

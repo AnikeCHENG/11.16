@@ -7,6 +7,7 @@ import com.example.campussecondhand.entity.User;
 import com.example.campussecondhand.service.EmailService;
 import com.example.campussecondhand.service.UserService;
 import com.example.campussecondhand.util.JwtUtil;
+import com.example.campussecondhand.util.StudentNoMasker;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -15,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import jakarta.validation.Valid;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -66,10 +68,22 @@ public class AuthController {
                 }
 
                 String token = jwtUtil.generateToken(user.getUsername(), user.getRole());
-                return ResponseEntity.ok(ApiResponse.success("登录成功", Map.of(
-                        "token", token,
-                        "user", user
-                )));
+                // 这里原来直接回 User 实体，前端登录后把整份 JSON 存进 localStorage，
+                // 于是 email / phone / qq / wechat / bio / location 一起被落盘，
+                // 且 isStudentVerified 是 Integer 0/1——与 /api/auth/me 的
+                // studentVerified（布尔）不是同一个约定，前端 store 得同时认两种。
+                // 改为显式返回消费方真正需要的四个字段加认证状态。
+                // 用 LinkedHashMap 而非 Map.of：avatar 可能为 null，而 Map.of 不接受 null 值。
+                Map<String, Object> loginUser = new LinkedHashMap<>();
+                loginUser.put("id", user.getId());
+                loginUser.put("username", user.getUsername());
+                loginUser.put("role", user.getRole());
+                loginUser.put("avatar", user.getAvatar());
+                loginUser.put("studentVerified", user.isStudentVerifiedUser());
+                Map<String, Object> loginResult = new LinkedHashMap<>();
+                loginResult.put("token", token);
+                loginResult.put("user", loginUser);
+                return ResponseEntity.ok(ApiResponse.success("登录成功", loginResult));
             } else {
                 return ResponseEntity.ok(ApiResponse.error(401, "用户名或密码错误"));
             }
@@ -163,6 +177,13 @@ public class AuthController {
             me.put("role", user.getRole());
             me.put("avatar", user.getAvatar());
             me.put("status", user.getStatus());
+            // 认证状态放进 /me，是因为它现在是全站身份信息的唯一入口：
+            // 前端路由守卫对任何 requiresAuth 页面都会先 fetchMe() 一次，
+            // 导航栏与个人中心可以直接读这里，不必各自再查一次 /api/users/{id}。
+            me.put("studentVerified", user.isStudentVerifiedUser());
+            // 学号是准身份标识，User.studentNo 标了 WRITE_ONLY 不参与序列化；
+            // 这里只回本人可见的脱敏值，完整学号不进任何 JSON。
+            me.put("studentNoMasked", StudentNoMasker.mask(user.getStudentNo()));
             return ResponseEntity.ok(ApiResponse.success("获取成功", me));
         } catch (Exception e) {
             log.warn("解析当前用户身份失败: {}", e.getMessage());
