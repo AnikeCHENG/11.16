@@ -88,7 +88,7 @@ const isProductPost = computed(() => !!props.post.productId)
       <div class="feed-meta">
         <b>
           {{ post.author?.username }}
-          <VerifiedBadge v-if="post.author?.studentVerifiedUser" :verified="true" size="sm" />
+          <VerifiedBadge v-if="post.author?.studentVerified" :verified="true" size="sm" />
         </b>
         <span>
           {{ formatTime(post.createdTime) }}

@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-
+import com.example.campussecondhand.dto.PostAuthorView;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -48,9 +48,16 @@ public class Post {
 
     /* ---------- 以下为接口返回用的非持久化字段 ---------- */
 
-    /** 发布者公开信息（username / avatar / isStudentVerified） */
+    /**
+     * 发布者公开信息（username / avatar / location / studentVerified）。
+     *
+     * <p><b>类型是 {@link PostAuthorView} 而不是 {@code User}，这是刻意的：</b>
+     * 大厅帖子接口无需登录即可访问，若这里持有完整 {@code User} 实体，
+     * 作者的 email / phone / qq / wechat / role 会随每条帖子一起外泄。
+     * 换成显式字段视图后，{@code User} 以后新增字段也不会自动出现在他人帖子里。</p>
+     */
     @TableField(exist = false)
-    private User author;
+    private PostAuthorView author;
 
     /** 关联商品快照；productId 为空时为 null */
     @TableField(exist = false)
@@ -116,8 +123,8 @@ public class Post {
     public LocalDateTime getCreatedTime() { return createdTime; }
     public void setCreatedTime(LocalDateTime createdTime) { this.createdTime = createdTime; }
 
-    public User getAuthor() { return author; }
-    public void setAuthor(User author) { this.author = author; }
+    public PostAuthorView getAuthor() { return author; }
+    public void setAuthor(PostAuthorView author) { this.author = author; }
 
     public Product getProduct() { return product; }
     public void setProduct(Product product) { this.product = product; }

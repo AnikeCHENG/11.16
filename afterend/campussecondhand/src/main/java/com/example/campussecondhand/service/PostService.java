@@ -1,6 +1,7 @@
 package com.example.campussecondhand.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.example.campussecondhand.dto.PostAuthorView;
 import com.example.campussecondhand.entity.Post;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.entity.User;
@@ -137,6 +138,10 @@ public class PostService {
         }
 
         // 作者（一次 IN 查全部）
+        //
+        // 这里刻意不把查回来的 User 实体直接塞进 Post——大厅接口无需登录，
+        // 实体上的 email / phone / qq / wechat / role 会随每条帖子外泄。
+        // 只挑出 PostCard 真正会读的字段装进 PostAuthorView。
         List<Long> userIds = posts.stream()
                 .map(Post::getUserId)
                 .filter(java.util.Objects::nonNull)
@@ -145,7 +150,20 @@ public class PostService {
         if (!userIds.isEmpty()) {
             Map<Long, User> userMap = userRepository.selectBatchIds(userIds).stream()
                     .collect(Collectors.toMap(User::getId, Function.identity()));
-            posts.forEach(p -> p.setAuthor(userMap.get(p.getUserId())));
+            posts.forEach(p -> {
+                User u = userMap.get(p.getUserId());
+                if (u == null) {
+                    // 作者账号被删：留 null，前端隐藏昵称行而不是渲染空白
+                    p.setAuthor(null);
+                    return;
+                }
+                p.setAuthor(new PostAuthorView(
+                        u.getId(),
+                        u.getUsername(),
+                        u.getAvatar(),
+                        u.getLocation(),
+                        Integer.valueOf(1).equals(u.getIsStudentVerified())));
+            });
         }
 
         // 关联商品快照
