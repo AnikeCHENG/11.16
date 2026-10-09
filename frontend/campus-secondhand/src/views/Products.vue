@@ -819,15 +819,23 @@ watch(() => route.fullPath, () => {
 .ph-other       { background: linear-gradient(135deg, #64748b, #475569); }
 .product-footer { display: flex; align-items: baseline; justify-content: space-between; }
 
-/* 价格：渐变字 + 微光晕。保留 color 兜底——不支持 background-clip:text
-   的浏览器上文字仍是 --accent 可读色，而不是透明消失。 */
+/* 价格：渐变字 + 微光晕。
+   渐变必须加在真正含文字的元素上，不能加在外层 .product-price 容器上——
+   -webkit-text-fill-color 是继承属性，放在容器上会被 .price-symbol 与
+   .price-value 继承，而这两个子元素 background-clip 是 border-box 且没有背景，
+   文字就被掏空且无渐变可显示，结果整页价格全部不可见（clip 继承同理）。
+   保留 color 兜底：不支持 background-clip:text 时文字仍是可读的实色。 */
 .product-price {
   display: flex; align-items: baseline; gap: 1px;
   color: var(--accent);
-  background: linear-gradient(135deg, #2dd4bf, #38bdf8);
+}
+.price-symbol,
+.price-value {
+  background-image: linear-gradient(135deg, #2dd4bf, #38bdf8);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  color: var(--accent);
 }
 .price-symbol { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
 .price-value {

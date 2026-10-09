@@ -173,17 +173,23 @@ router.beforeEach(async (to, from, next) => {
     return
   }
 
-  if (requiresAdmin) {
-    const store = useUserStore()
-    // role 未从服务端确认过时，先查一次 /api/auth/me 并缓存，后续导航不再请求
-    if (!store.verified) {
-      const me = await store.fetchMe()
-      if (!me) {
-        // token 失效
-        next({ path: '/login', query: { redirect: to.fullPath } })
-        return
-      }
+  // 登录态与身份信息统一在守卫里取一次并缓存进 store。
+  //
+  // 原先把这段嵌在 if (requiresAdmin) 里面，只有管理页会调 fetchMe()，
+  // 于是 C 端页面在硬刷新后 userStore 始终是空的——导航头像拿不到 username
+  // 与 avatar（退化成占位符「?」），role 也是 null。放在 requiresAuth 下
+  // 才是注释原本描述的行为：首次进入取一次，之后导航不再请求。
+  const store = useUserStore()
+  if (requiresAuth && !store.verified) {
+    const me = await store.fetchMe()
+    if (!me) {
+      // token 失效或已过期
+      next({ path: '/login', query: { redirect: to.fullPath } })
+      return
     }
+  }
+
+  if (requiresAdmin) {
     if (store.role !== 1) {
       ElMessage.error('无权限：需要管理员身份')
       next({ path: '/' })

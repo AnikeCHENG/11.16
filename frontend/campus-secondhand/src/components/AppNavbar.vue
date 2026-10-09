@@ -40,12 +40,18 @@ const isLoggedIn = ref(
 /**
  * 头像占位字母。
  *
- * <p>必须在 script 里算好：{@code <script setup>} 的模板作用域不暴露
- * {@code localStorage} 等全局对象（Vue 会报 "was accessed during render but is
- * not defined on instance" 并导致渲染中断），直接在模板里写 localStorage 会让
- * 整条导航渲染失败。</p>
+ * <p>数据来自 useUserStore（登录时 setFromLogin，路由守卫再 fetchMe 校验），
+ * 而不是 localStorage.getItem('username') —— 登录页实际存的是
+ * {@code localStorage.setItem('user', JSON.stringify(user))}，键名是 'user'
+ * 而非 'username'。之前读错了键，导致头像恒为占位符「?」。</p>
+ *
+ * <p>另：{@code <script setup>} 的模板作用域不暴露 localStorage，
+ * 在模板里直接写 localStorage 会让整条导航渲染中断（Vue 会抛
+ * "was accessed during render but is not defined on instance"）。</p>
  */
-const usernameInitial = ref((localStorage.getItem('username') || '?').charAt(0))
+const usernameInitial = computed(() => (userStore.username || '?').charAt(0))
+/** 真实头像图片。与「我的」页、活跃用户列表用的是同一个字段，视觉才统一。 */
+const userAvatar = computed(() => userStore.avatar || '')
 const menuOpen = ref(false)
 const scrolled = ref(false)
 
@@ -99,9 +105,12 @@ async function onLogout() {
 
 // 登出/登录在其他页面发生时（例如 Messages 页标记已读），同步顶栏状态
 function syncAuth() {
-  const has = Boolean(localStorage.getItem('token') || sessionStorage.getItem('token'))
-  isLoggedIn.value = has
-  usernameInitial.value = (localStorage.getItem('username') || '?').charAt(0)
+  isLoggedIn.value = Boolean(
+    localStorage.getItem('token') || sessionStorage.getItem('token')
+  )
+  // 登录页会 setFromLogin 到 store，但那只发生在该页面的内存里；
+  // 从别处登出/登录时这里补拉一次，避免顶栏与实际登录态脱节
+  if (isLoggedIn.value) userStore.fetchMe()
 }
 
 onMounted(() => {
@@ -169,9 +178,12 @@ onBeforeUnmount(() => {
               type="button"
               :aria-expanded="menuOpen"
               aria-haspopup="menu"
-              aria-label="账号菜单"
+              :aria-label="`账号菜单：${userStore.username || '未登录'}`"
               @click="menuOpen = !menuOpen"
-            >{{ usernameInitial }}</button>
+            >
+              <img v-if="userAvatar" :src="userAvatar" :alt="`${userStore.username} 的头像`" />
+              <template v-else>{{ usernameInitial }}</template>
+            </button>
             <div v-if="menuOpen" class="nb-menu" role="menu">
               <button type="button" role="menuitem" @click="go('/profile')">我的</button>
               <!-- Drafts 此前在全站没有任何入口，页面可达性为零 -->
@@ -280,8 +292,16 @@ onBeforeUnmount(() => {
 @supports not ((-webkit-background-clip: text) or (background-clip: text)) {
   .nb-logo-text { -webkit-text-fill-color: currentColor; color: var(--text); }
 }
+/* 首页浅色分支的深绿→蓝渐变。
+   必须用 background-image 而不是 background 简写：简写会把
+   background-clip 重置为初始值 border-box，渐变便画在边框盒上而文字被
+   -webkit-text-fill-color:transparent 掏空 —— Logo 直接消失。
+   深色分支之所以正常，是因为那里 background 与 clip 写在同一条规则内、
+   clip 在后。 */
 .app-navbar.is-light .nb-logo-text {
-  background: linear-gradient(135deg, #0b6e54, #2563eb);
+  background-image: linear-gradient(135deg, #0b6e54, #2563eb);
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 /* ---------- 中：导航项 ---------- */
@@ -375,12 +395,15 @@ onBeforeUnmount(() => {
 .nb-user { position: relative; }
 .nb-avatar {
   width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  overflow: hidden;
   border: 1px solid var(--border); border-radius: var(--radius-full);
   background: var(--surface-3);
   color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold);
   cursor: pointer;
   transition: border-color var(--dur-fast) var(--ease);
 }
+.nb-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .nb-avatar:hover { border-color: var(--accent); }
 .nb-menu {
   position: absolute; top: calc(100% + 8px); right: 0;
