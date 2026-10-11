@@ -59,6 +59,7 @@ class OrderPaymentTest {
         productService = mock(ProductService.class);
         orderService = new OrderService(orderRepository, paymentRecordRepository, productRepository,
                 userRepository, productService, new OrderFeeService(),
+                mock(FundService.class),
                 new MockPaymentServiceImpl(),
                 new ResourcelessTransactionTemplate(),
                 30);

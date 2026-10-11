@@ -69,7 +69,7 @@ class OrderCheckoutRaceTest {
         productService = mock(ProductService.class);
         orderService = new OrderService(orderRepository, mock(PaymentRecordRepository.class),
                 productRepository, mock(UserRepository.class), productService,
-                new OrderFeeService(), new MockPaymentServiceImpl(),
+                new OrderFeeService(), mock(FundService.class), new MockPaymentServiceImpl(),
                 new ResourcelessTransactionTemplate(), 30);
     }
 

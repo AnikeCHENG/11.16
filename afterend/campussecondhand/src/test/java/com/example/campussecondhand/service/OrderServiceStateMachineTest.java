@@ -48,6 +48,7 @@ class OrderServiceStateMachineTest {
         productService = mock(ProductService.class);
         orderService = new OrderService(orderRepository, mock(PaymentRecordRepository.class),
                 productRepository, userRepository, productService, new OrderFeeService(),
+                mock(FundService.class),
                 new MockPaymentServiceImpl(), new ResourcelessTransactionTemplate(), 30);
 
         // 默认：条件 UPDATE "命中"（返回 1 行）、商品抢占成功。
@@ -242,6 +243,7 @@ class OrderServiceStateMachineTest {
         // 验收测试会把配置改成 1 分钟以加速验证
         OrderService oneMinute = new OrderService(orderRepository, mock(PaymentRecordRepository.class),
                 productRepository, userRepository, productService, new OrderFeeService(),
+                mock(FundService.class),
                 new MockPaymentServiceImpl(), new ResourcelessTransactionTemplate(), 1);
         assertThat(oneMinute.getPayTimeoutMinutes()).isEqualTo(1);
         assertThat(orderService.getPayTimeoutMinutes()).isEqualTo(30);

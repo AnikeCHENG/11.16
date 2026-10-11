@@ -13,9 +13,11 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -43,14 +45,16 @@ class OrderTransitionTest {
     private static final Long STRANGER_ID = 9L;
 
     private OrderRepository orderRepository;
+    private FundService fundService;
     private OrderService orderService;
 
     @BeforeEach
     void setUp() {
         orderRepository = mock(OrderRepository.class);
+        fundService = mock(FundService.class);
         orderService = new OrderService(orderRepository, mock(PaymentRecordRepository.class),
                 mock(ProductRepository.class), mock(UserRepository.class), mock(ProductService.class),
-                new OrderFeeService(), new MockPaymentServiceImpl(),
+                new OrderFeeService(), fundService, new MockPaymentServiceImpl(),
                 new ResourcelessTransactionTemplate(), 30);
         when(orderRepository.updateStatusIfMatch(anyLong(), anyInt(), anyInt())).thenReturn(1);
     }
@@ -132,6 +136,47 @@ class OrderTransitionTest {
     }
 
     @Test
+    @DisplayName("确认收货：在同一事务里给卖家入账（放款）")
+    void confirm_receipt_credits_seller_income() {
+        when(orderRepository.selectById(ORDER_ID))
+                .thenReturn(orderWithStatus(OrderStatus.PENDING_RECEIPT.getCode()));
+
+        Order completed = orderService.confirmReceipt(ORDER_ID, BUYER_ID);
+
+        // 余额与流水由 FundService 负责（见 FundServiceTest），
+        // 这里钉住的是"确认收货必然触发入账"这条契约
+        verify(fundService).creditSellerIncome(completed);
+    }
+
+    @Test
+    @DisplayName("确认收货失败时绝不能入账")
+    void failed_confirm_receipt_does_not_credit_seller() {
+        when(orderRepository.selectById(ORDER_ID))
+                .thenReturn(orderWithStatus(OrderStatus.PENDING_PAYMENT.getCode()));
+        when(orderRepository.updateStatusIfMatch(ORDER_ID,
+                OrderStatus.PENDING_RECEIPT.getCode(), OrderStatus.COMPLETED.getCode()))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> orderService.confirmReceipt(ORDER_ID, BUYER_ID))
+                .isInstanceOf(OrderService.OrderBusinessException.class);
+        verify(fundService, never()).creditSellerIncome(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("发货失败时不入账")
+    void failed_ship_does_not_credit_seller() {
+        when(orderRepository.selectById(ORDER_ID))
+                .thenReturn(orderWithStatus(OrderStatus.PENDING_PAYMENT.getCode()));
+        when(orderRepository.updateStatusIfMatch(ORDER_ID,
+                OrderStatus.PENDING_SHIPMENT.getCode(), OrderStatus.PENDING_RECEIPT.getCode()))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> orderService.shipOrder(ORDER_ID, SELLER_ID))
+                .isInstanceOf(OrderService.OrderBusinessException.class);
+        verify(fundService, never()).creditSellerIncome(any(Order.class));
+    }
+
+    @Test
     @DisplayName("卖家不能替买家确认收货（否则自己给自己放款）")
     void seller_cannot_confirm_receipt() {
         when(orderRepository.selectById(ORDER_ID))
@@ -140,7 +185,7 @@ class OrderTransitionTest {
         assertThatThrownBy(() -> orderService.confirmReceipt(ORDER_ID, SELLER_ID))
                 .isInstanceOf(OrderService.OrderBusinessException.class)
                 .hasMessageContaining("只有买家");
-        verify(orderRepository, org.mockito.Mockito.never())
+        verify(orderRepository, never())
                 .updateStatusIfMatch(anyLong(), anyInt(), anyInt());
     }
 

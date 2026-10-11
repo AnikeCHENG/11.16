@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -56,6 +57,7 @@ public class OrderService {
     private final UserRepository userRepository;
     private final ProductService productService;
     private final OrderFeeService orderFeeService;
+    private final FundService fundService;
     private final PaymentService paymentService;
     private final TransactionTemplate transactionTemplate;
 
@@ -69,6 +71,7 @@ public class OrderService {
                         UserRepository userRepository,
                         ProductService productService,
                         OrderFeeService orderFeeService,
+                        FundService fundService,
                         PaymentService paymentService,
                         TransactionTemplate transactionTemplate,
                         @Value("${order.pay-timeout-minutes:30}") int payTimeoutMinutes) {
@@ -78,6 +81,7 @@ public class OrderService {
         this.userRepository = userRepository;
         this.productService = productService;
         this.orderFeeService = orderFeeService;
+        this.fundService = fundService;
         this.paymentService = paymentService;
         this.transactionTemplate = transactionTemplate;
         this.payTimeoutMinutes = payTimeoutMinutes;
@@ -173,12 +177,63 @@ public class OrderService {
 
         try {
             orderRepository.insert(order);
-        } catch (org.springframework.dao.DuplicateKeyException e) {
+        } catch (DuplicateKeyException e) {
+            if (!isOrderNoConflict(e)) {
+                throw translateNonOrderNoConflict(e);
+            }
+            // 只有订单号撞键才值得重试：order_no = 秒级时间戳 + 3 位随机数，
+            // 同一秒内的并发下单有极小概率撞车，换一个号即可
             order.setOrderNo(generateOrderNo());
-            orderRepository.insert(order);
+            try {
+                orderRepository.insert(order);
+            } catch (DuplicateKeyException retryFailure) {
+                if (!isOrderNoConflict(retryFailure)) {
+                    throw translateNonOrderNoConflict(retryFailure);
+                }
+                log.warn("订单号连续两次撞键，放弃本次下单: orderNo={}", order.getOrderNo());
+                throw new OrderBusinessException("下单失败，请稍后重试");
+            }
         }
 
         return order;
+    }
+
+    /**
+     * 判断唯一键冲突是否发生在订单号上。
+     *
+     * <p>MySQL 的报错形如
+     * {@code Duplicate entry '20261012000816321' for key 'orders.uk_order_no'}，
+     * 里面带着索引名，据此区分"订单号撞车"与"商品重复下单"。</p>
+     *
+     * <p><b>识别不出来时一律当作"不是订单号冲突"</b>：宁可少重试一次，
+     * 也不要拿无意义的重试去掩盖真实的约束冲突——那会让同一个错误连报两次、
+     * 日志里还看不到真正的原因。</p>
+     */
+    private static boolean isOrderNoConflict(DuplicateKeyException e) {
+        String message = mostSpecificMessage(e);
+        return message != null && message.contains("order_no");
+    }
+
+    /**
+     * 把"不是订单号撞键"的唯一键冲突翻译成用户看得懂的业务异常。
+     *
+     * <p>区分两种：已知的商品唯一约束
+     * （{@code uk_active_product}，见 migration-order-unique-active.sql）
+     * 给明确提示；其余未知约束只回笼统话术并打日志——把没识别出的
+     * 数据库错误硬说成"商品已有订单"会误导排查方向。</p>
+     */
+    private OrderBusinessException translateNonOrderNoConflict(DuplicateKeyException e) {
+        String message = mostSpecificMessage(e);
+        if (message != null && message.contains("active_product")) {
+            return new OrderBusinessException("该商品已有未完成的订单，请勿重复下单");
+        }
+        log.error("下单时发生未识别的唯一键冲突", e);
+        return new OrderBusinessException("下单失败，请稍后重试");
+    }
+
+    private static String mostSpecificMessage(DuplicateKeyException e) {
+        Throwable cause = e.getMostSpecificCause();
+        return cause != null ? cause.getMessage() : e.getMessage();
     }
 
     /**
@@ -372,10 +427,11 @@ public class OrderService {
     }
 
     /**
-     * 买家确认收货：待收货（2）→ 已完成（3）。
+     * 买家确认收货：待收货（2）→ 已完成（3），并在<b>同一事务</b>内给卖家入账。
      *
-     * <p>// TODO(放款)：确认收货时应在同一事务里把 seller_income 记入卖家账户余额
-     * 并写一条资金流水（当前项目没有 accounts / 流水表，属 P1）。</p>
+     * <p>入账（{@link FundService#creditSellerIncome}）与状态推进共用一个事务：
+     * 状态改了钱没记，卖家白发货；钱记了状态没改，订单能再确认一次。
+     * 两者要么都成，要么都不成。</p>
      *
      * @param orderId 订单主键
      * @param userId  当前登录用户，必须是该订单的买家
@@ -395,6 +451,11 @@ public class OrderService {
         order.setStatus(OrderStatus.COMPLETED.getCode());
         order.setCompletedTime(LocalDateTime.now());
         order.setUpdatedTime(LocalDateTime.now());
+
+        // 放款：seller_income 计入卖家余额 + 写资金流水（表结构见
+        // migration-seller-balance.sql）。任一步失败都会连同上面的状态更新一起回滚。
+        fundService.creditSellerIncome(order);
+
         log.info("买家 {} 确认收货: orderNo={}", userId, order.getOrderNo());
         return order;
     }
