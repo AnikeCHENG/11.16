@@ -7,6 +7,7 @@ import com.example.campussecondhand.common.PageParam;
 import com.example.campussecondhand.common.PageResult;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.example.campussecondhand.entity.User;
+import com.example.campussecondhand.enums.OrderStatus;
 import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.entity.Order;
@@ -44,6 +45,14 @@ import java.util.ArrayList;
  * 避免新增端点时漏写检查造成越权。</p>
  */
 public class AdminController {
+
+    /**
+     * 批量接口单次可处理的最大条目数。
+     *
+     * <p>批量接口没有上限时，一个长度 10 万的数组就是 20 万次数据库往返——
+     * 任何登录的管理员（或被盗的管理员账号）都能用它把库拖垮。</p>
+     */
+    private static final int BATCH_UPDATE_LIMIT = 100;
 
     @Autowired
     private UserRepository userRepository;
@@ -117,6 +126,30 @@ User user = userRepository.selectById(id);
             @RequestHeader("Authorization") String authHeader,
             @PathVariable Long id,
             @RequestBody Integer status) {
+        // 白名单：users.status 只有 1 正常 / 0 禁用 两种语义。
+        // 此前接受任意 Integer（例如 7），会写进一个既非正常也非封禁、
+        // 任何筛选都看不到的状态值。
+        if (status == null || (status != 0 && status != 1)) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "非法的用户状态值，只允许 0（禁用）或 1（正常）"));
+        }
+
+        // 自我封锁：全站只有管理员能进后台，把自己封了就没有第二个账号能恢复
+        Long currentUserId = currentUserId(authHeader);
+        if (currentUserId != null && currentUserId.equals(id)) {
+            return ResponseEntity.ok(ApiResponse.error(400, "不能修改自己的账号状态"));
+        }
+
+        User target = userRepository.selectById(id);
+        if (target == null) {
+            return ResponseEntity.ok(ApiResponse.error(404, "用户不存在"));
+        }
+        // 与举报处理路径同一口径（ReportService「不能封禁管理员账号」）：
+        // 否则一次误操作就能锁死管理员，且没有旁人能救回来
+        if (target.getRole() != null && target.getRole() == 1) {
+            return ResponseEntity.ok(ApiResponse.error(403, "不能修改管理员的账号状态"));
+        }
+
         try {
             User user = penaltyService.updateUserStatus(id, status, operatorOf(authHeader));
             return ResponseEntity.ok(ApiResponse.success("更新成功", user));
@@ -133,6 +166,27 @@ User user = userRepository.selectById(id);
         }
         String username = jwtUtil.getUsernameFromToken(authHeader.substring(7));
         return username == null ? "unknown" : username;
+    }
+
+    /**
+     * 从请求头解析当前登录管理员的主键。
+     *
+     * <p>拦截器已保证调用者是有效管理员，这里只是为了让"不能封自己"这条规则
+     * 拿到操作者身份；解析失败返回 {@code null}（该规则不生效，但其余校验照旧）。</p>
+     */
+    private Long currentUserId(String authHeader) {
+        try {
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return null;
+            }
+            String username = jwtUtil.getUsernameFromToken(authHeader.substring(7));
+            if (username == null) {
+                return null;
+            }
+            return userRepository.findByUsername(username).map(User::getId).orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ==================== 商品管理 ====================
@@ -201,14 +255,26 @@ Product product = productRepository.selectById(id);
     public ResponseEntity<ApiResponse<?>> batchUpdateProductStatus(
             @RequestHeader("Authorization") String authHeader,
             @RequestBody Map<String, Object> params) {
-List<?> rawIds = (List<?>) params.get("ids");
+        // 类型安全：此前直接 (List<?>) 强转，前端传 "1,2,3" 这种字符串会
+        // ClassCastException → 500，日志里只看得到"服务器内部错误"
+        Object rawIds = params.get("ids");
+        if (!(rawIds instanceof List<?> idList) || idList.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(400, "ids 必须是数组且不能为空"));
+        }
+        // 上限：一次最多改 100 件。没有上限时，一个 10 万长度的数组
+        // 就是 20 万次数据库往返，任何登录的管理员都能把库拖垮
+        if (idList.size() > BATCH_UPDATE_LIMIT) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "一次最多批量修改 " + BATCH_UPDATE_LIMIT + " 件商品"));
+        }
+
         Object rawStatus = params.get("status");
-        if (rawIds == null || rawIds.isEmpty() || rawStatus == null) {
-            return ResponseEntity.ok(ApiResponse.error(400, "参数错误"));
+        if (rawStatus == null) {
+            return ResponseEntity.ok(ApiResponse.error(400, "状态不能为空"));
         }
         Integer status;
         try {
-            status = Integer.valueOf(rawStatus.toString());
+            status = Integer.valueOf(rawStatus.toString().trim());
         } catch (NumberFormatException e) {
             return ResponseEntity.ok(ApiResponse.error(400, "状态值必须是数字"));
         }
@@ -219,33 +285,52 @@ List<?> rawIds = (List<?>) params.get("ids");
             return ResponseEntity.ok(ApiResponse.error(400, "非法的商品状态值"));
         }
 
+        int skippedCount = 0;
         int updatedCount = 0;
-        for (Object rawId : rawIds) {
-            Long id = Long.valueOf(rawId.toString());
+        for (Object rawId : idList) {
+            Long id;
+            try {
+                id = Long.valueOf(String.valueOf(rawId).trim());
+            } catch (NumberFormatException e) {
+                // 单个 id 非法只跳过它：批量操作里混进一个脏值，
+                // 不该让其余 99 件已选中的商品白改一遍
+                skippedCount++;
+                continue;
+            }
             Product product = productRepository.selectById(id);
             if (product != null) {
                 product.setStatus(target.getCode());
                 productRepository.updateById(product);
                 updatedCount++;
+            } else {
+                skippedCount++;
             }
         }
 
-        return ResponseEntity.ok(ApiResponse.success("批量更新成功", Map.of("updatedCount", updatedCount)));
+        return ResponseEntity.ok(ApiResponse.success("批量更新成功",
+                Map.of("updatedCount", updatedCount, "skippedCount", skippedCount)));
     }
 
     // ==================== 订单管理 ====================
 
-    // 获取所有订单
+    // 获取所有订单（支持按订单号 / 商品标题搜索）
     @GetMapping("/orders")
     public ResponseEntity<ApiResponse<?>> getAllOrders(
             @RequestHeader("Authorization") String authHeader,
+            @RequestParam(required = false) String search,
             @RequestParam(required = false) Integer status,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         // 分页参数统一校验：page<1 或 size 越界直接 400，不再静默纠正
         PageParam paging = PageParam.of(page, size);
 
-com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Order> wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        QueryWrapper<Order> wrapper = new QueryWrapper<>();
+        // 管理端订单搜索：前端一直有个搜索框，但后端此前没有这个参数，
+        // Spring 静默忽略未知查询参数，于是"搜索"按钮其实什么都没做
+        if (search != null && !search.isBlank()) {
+            String keyword = search.trim();
+            wrapper.and(q -> q.like("order_no", keyword).or().like("order_title", keyword));
+        }
         if (status != null) {
             wrapper.eq("status", status);
         }
@@ -255,7 +340,7 @@ com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Order> wrapper = new
         IPage<Order> paged = orderRepository.selectPage(paging.toPage(), wrapper);
 
         return ResponseEntity.ok(ApiResponse.success("获取成功",
-                PageResult.of(paged.getRecords(), paged.getTotal(), paging)));
+                PageResult.of(toAdminOrderViews(paged.getRecords()), paged.getTotal(), paging)));
     }
 
     // 获取订单详情
@@ -263,38 +348,133 @@ com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Order> wrapper = new
     public ResponseEntity<ApiResponse<?>> getOrderDetail(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable Long id) {
-Order order = orderRepository.selectById(id);
+        Order order = orderRepository.selectById(id);
         if (order == null) {
             return ResponseEntity.ok(ApiResponse.error(404, "订单不存在"));
         }
-
-        return ResponseEntity.ok(ApiResponse.success("获取成功", order));
+        // 详情与列表用同一套视图，避免"列表有昵称、点开就变未知用户"
+        return ResponseEntity.ok(ApiResponse.success("获取成功",
+                toAdminOrderViews(List.of(order)).get(0)));
     }
 
-    // 更新订单状态
+    /**
+     * 管理端订单视图：补上买家/卖家昵称与商品标题。
+     *
+     * <p><b>为什么必须在这里补：</b>{@code Order} 的 buyer / seller / product 三个字段
+     * 都标了 {@code @TableField(exist = false)}，不参与序列化，裸实体里只有
+     * buyerId / sellerId / productId。前端管理页读的是 {@code order.user?.username}、
+     * {@code order.product?.name}、{@code order.createdAt}——三个字段全不存在，
+     * 于是每张订单卡片都显示"未知用户 / 未知商品 / ¥0 / 空白时间"。</p>
+     *
+     * <p>买家与卖家按当页 id 批量查询，避免每条订单两次 selectById 的 N+1。</p>
+     */
+    private List<Map<String, Object>> toAdminOrderViews(List<Order> orders) {
+        if (orders == null || orders.isEmpty()) {
+            return List.of();
+        }
+        List<Long> userIds = new ArrayList<>();
+        List<Long> productIds = new ArrayList<>();
+        for (Order o : orders) {
+            if (o.getBuyerId() != null) {
+                userIds.add(o.getBuyerId());
+            }
+            if (o.getSellerId() != null) {
+                userIds.add(o.getSellerId());
+            }
+            if (o.getProductId() != null) {
+                productIds.add(o.getProductId());
+            }
+        }
+        Map<Long, User> users = userIds.isEmpty() ? Map.of()
+                : userRepository.selectBatchIds(userIds.stream().distinct().toList()).stream()
+                        .collect(java.util.stream.Collectors.toMap(User::getId, u -> u));
+        Map<Long, Product> products = productIds.isEmpty() ? Map.of()
+                : productRepository.selectBatchIds(productIds.stream().distinct().toList()).stream()
+                        .collect(java.util.stream.Collectors.toMap(Product::getId, p -> p));
+
+        List<Map<String, Object>> result = new ArrayList<>(orders.size());
+        for (Order o : orders) {
+            Map<String, Object> view = new LinkedHashMap<>();
+            view.put("id", o.getId());
+            view.put("orderNo", o.getOrderNo());
+            view.put("status", o.getStatus());
+            view.put("buyerId", o.getBuyerId());
+            view.put("sellerId", o.getSellerId());
+            view.put("productId", o.getProductId());
+            view.put("price", o.getPrice());
+            view.put("shippingFee", o.getShippingFee());
+            view.put("serviceFee", o.getServiceFee());
+            view.put("sellerIncome", o.getSellerIncome());
+            view.put("createdTime", o.getCreatedTime());
+            view.put("paidTime", o.getPaidTime());
+
+            User buyer = users.get(o.getBuyerId());
+            User seller = users.get(o.getSellerId());
+            view.put("buyerName", buyer != null ? buyer.getUsername() : "未知用户");
+            view.put("sellerName", seller != null ? seller.getUsername() : "未知卖家");
+
+            // 标题优先取订单快照：商品被删改后，成交时的信息仍然可查
+            Product product = products.get(o.getProductId());
+            view.put("productTitle", o.getOrderTitle() != null
+                    ? o.getOrderTitle()
+                    : (product != null ? product.getTitle() : "商品已删除"));
+
+            result.add(view);
+        }
+        return result;
+    }
+
+    // 更新订单状态（管理端应急处置）
     @PutMapping("/orders/{id}/status")
     public ResponseEntity<ApiResponse<?>> updateOrderStatus(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable Long id,
             @RequestBody Map<String, String> params) {
-String statusStr = params.get("status");
+        String statusStr = params.get("status");
         if (statusStr == null || statusStr.isEmpty()) {
             return ResponseEntity.ok(ApiResponse.error(400, "状态不能为空"));
+        }
+
+        // 白名单：此前把任意 Integer 直接写进 orders.status。
+        // 传 30 会存进一个任何筛选都看不到的状态；传 3 则要看它从哪来（见下）
+        Integer status;
+        try {
+            status = Integer.parseInt(statusStr.trim());
+        } catch (NumberFormatException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, "状态值必须是数字"));
+        }
+        OrderStatus target = OrderStatus.fromCode(status);
+        if (target == null) {
+            return ResponseEntity.ok(ApiResponse.error(400, "非法的订单状态值"));
         }
 
         Order order = orderRepository.selectById(id);
         if (order == null) {
             return ResponseEntity.ok(ApiResponse.error(404, "订单不存在"));
         }
-        try {
-            Integer status = Integer.parseInt(statusStr);
-            order.setStatus(status);
-        } catch (NumberFormatException e) {
-            return ResponseEntity.ok(ApiResponse.error(400, "状态值必须是数字"));
+
+        // 待支付订单不能直接标记为已完成：财务口径把 待发货/待收货/已完成 都算作
+        // 已收款（见 AdminStatsService），越过支付直接完成等于凭空造出一笔 GMV，
+        // 而 paid_time 仍为空又会让"月度服务费趋势"不认它，两个财务数字互相打架
+        if (OrderStatus.isPendingPayment(order.getStatus()) && target == OrderStatus.COMPLETED) {
+            return ResponseEntity.ok(ApiResponse.error(400, "待支付订单不能直接标记为已完成"));
         }
+        // 终态只允许保持原状，不允许被改写回中间状态（订单是对账凭证）
+        boolean terminal = OrderStatus.isCompleted(order.getStatus())
+                || OrderStatus.isCancelled(order.getStatus());
+        if (terminal && !java.util.Objects.equals(target.getCode(), order.getStatus())) {
+            return ResponseEntity.ok(ApiResponse.error(400, "已完成/已取消的订单不能再改状态"));
+        }
+
+        order.setStatus(target.getCode());
+        if (target == OrderStatus.COMPLETED && order.getCompletedTime() == null) {
+            order.setCompletedTime(java.time.LocalDateTime.now());
+        }
+        order.setUpdatedTime(java.time.LocalDateTime.now());
         orderRepository.updateById(order);
 
-        return ResponseEntity.ok(ApiResponse.success("更新成功", order));
+        return ResponseEntity.ok(ApiResponse.success("更新成功",
+                toAdminOrderViews(List.of(order)).get(0)));
     }
 
     // 删除订单
@@ -302,9 +482,16 @@ String statusStr = params.get("status");
     public ResponseEntity<ApiResponse<?>> deleteOrder(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable Long id) {
-Order order = orderRepository.selectById(id);
+        Order order = orderRepository.selectById(id);
         if (order == null) {
             return ResponseEntity.ok(ApiResponse.error(404, "订单不存在"));
+        }
+        // 与用户端 DELETE /api/orders/{id} 同一口径：orderRepository 是物理删除
+        // （orders 实体没有逻辑删除字段），删掉一笔进行中的订单等于抹掉交易凭证，
+        // 商品已锁定、钱已收，却再也查不到这笔单子，财务统计也被改写
+        if (!OrderStatus.isCompleted(order.getStatus())
+                && !OrderStatus.isCancelled(order.getStatus())) {
+            return ResponseEntity.ok(ApiResponse.error(400, "仅已完成或已取消的订单可以删除"));
         }
 
         orderRepository.deleteById(id);
