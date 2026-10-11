@@ -90,20 +90,13 @@ public class PostController {
 
         PageParam paging = PageParam.of(page, size);
 
-        // 非法 type 不静默降级为「全部」：返回空列表，避免用户以为筛选生效了
-        if (type != null && !type.isBlank() && PostType.fromCode(type) == null) {
-            return ResponseEntity.ok(ApiResponse.success("获取成功",
-                    new PageResult<>(List.of(), 0, paging.page(), paging.size())));
-        }
-
-        List<Post> all = postService.list(type, 1, Integer.MAX_VALUE);
-        int total = all.size();
-        int from = (int) Math.min(paging.offset(), total);
-        int to = Math.min(from + paging.size(), total);
-        List<Post> slice = from >= total ? List.of() : List.copyOf(all.subList(from, to));
+        // 非法 type 由服务层返回空页（不静默降级为「全部」，避免用户以为筛选生效了）。
+        // 这里不再自己 subList：分页下推到 SQL，由分页拦截器拼 LIMIT，
+        // 此前是「全表 selectList + 内存 subList」，每刷一次广场读整张 posts 表。
+        IPage<Post> paged = postService.page(type, paging);
 
         return ResponseEntity.ok(ApiResponse.success("获取成功",
-                new PageResult<>(slice, total, paging.page(), paging.size())));
+                PageResult.of(paged.getRecords(), paged.getTotal(), paging)));
     }
 
     /** 类型字典，供前端渲染筛选项，避免前端硬编码枚举文案 */

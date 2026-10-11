@@ -1,6 +1,9 @@
 package com.example.campussecondhand.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.campussecondhand.common.PageParam;
 import com.example.campussecondhand.dto.PostAuthorView;
 import com.example.campussecondhand.entity.Post;
 import com.example.campussecondhand.entity.Product;
@@ -116,22 +119,32 @@ public class PostService {
         return post;
     }
 
-    /** 带商品快照、作者信息与互动计数的列表；type 为 null 表示不限类型 */
-    public List<Post> list(String typeCode, int page, int size) {
-        QueryWrapper<Post> wrapper = new QueryWrapper<>();
+    /**
+     * 动态列表（<b>物理分页</b>）。
+     *
+     * <p><b>此前这里是一次全表拉取：</b>方法签名上的 page/size 压根没被使用，
+     * 内部直接 {@code selectList(wrapper)}，Controller 再在内存里 subList。
+     * 每打开一次广场，就把整张 {@code posts} 表连同 enrich 的批量查询全部读出来，
+     * 最后丢掉 99% 的行。现在 LIMIT 由分页拦截器拼进 SQL，只取当页。</p>
+     *
+     * <p>{@code typeCode} 非法（传了不存在的类型）时不静默降级为"全部"，
+     * 而是返回空页，由前端据此隐藏筛选态——与旧行为一致。</p>
+     */
+    public IPage<Post> page(String typeCode, PageParam paging) {
         PostType type = PostType.fromCode(typeCode);
         if (typeCode != null && !typeCode.isBlank() && type == null) {
-            // 传了非法 type：按铁律不静默降级为「全部」，直接返回空列表由前端隐藏筛选态
-            return List.of();
+            return new Page<>(paging.page(), paging.size(), 0);
         }
+
+        QueryWrapper<Post> wrapper = new QueryWrapper<>();
         if (type != null) {
             wrapper.eq("type", type.name());
         }
         wrapper.orderByDesc("created_time", "id");
 
-        List<Post> posts = postRepository.selectList(wrapper);
-        enrich(posts);
-        return posts;
+        IPage<Post> paged = postRepository.selectPage(paging.toPage(), wrapper);
+        enrich(paged.getRecords());
+        return paged;
     }
 
     /**
@@ -221,16 +234,6 @@ public class PostService {
                 new QueryWrapper<Product>().eq("user_id", userId).eq("status", 1)));
         stats.put("seeking", postRepository.countByUserAndType(userId, PostType.SEEK.name()));
         return stats;
-    }
-
-    /** 一次性取回一页动态（含 enrich），供 Controller 直接使用 */
-    public List<Post> page(String typeCode, int offset, int size) {
-        List<Post> all = list(typeCode, 1, Integer.MAX_VALUE);
-        if (offset >= all.size()) {
-            return List.of();
-        }
-        int to = Math.min(offset + size, all.size());
-        return new ArrayList<>(all.subList(offset, to));
     }
 
     /* ---------------- 内部工具 ---------------- */
