@@ -16,19 +16,26 @@
           @keyup.enter="fetchProducts"
         />
         <select v-model="categoryFilter" class="filter-select" @change="fetchProducts">
+          <!--
+            value 必须与库里存的一致：ProductService.autoCategorize 与 PostProduct.vue
+            写入的是 books / electronics 这类英文键，中文只是展示名。
+            此前 value 直接写中文，eq("category", "电子产品") 永远匹配不到任何一行。
+          -->
           <option value="">所有分类</option>
-          <option value="电子产品">电子产品</option>
-          <option value="服装鞋帽">服装鞋帽</option>
-          <option value="家居用品">家居用品</option>
-          <option value="运动户外">运动户外</option>
-          <option value="图书音像">图书音像</option>
-          <option value="其他">其他</option>
+          <option value="books">教材书籍</option>
+          <option value="electronics">电子产品</option>
+          <option value="transport">出行工具</option>
+          <option value="gaming">游戏数码</option>
+          <option value="clothing">服饰穿搭</option>
+          <option value="living">生活用品</option>
+          <option value="other">其他</option>
         </select>
         <select v-model="statusFilter" class="filter-select" @change="fetchProducts">
+          <!-- 语义以 ProductStatus 枚举为准：0=已下架 1=在售 2=已售出 -->
           <option value="">所有状态</option>
-          <option value="0">在售</option>
-          <option value="1">已售出</option>
-          <option value="2">已下架</option>
+          <option :value="1">在售</option>
+          <option :value="2">已售出</option>
+          <option :value="0">已下架</option>
         </select>
         <button class="search-button" @click="fetchProducts">搜索</button>
       </div>

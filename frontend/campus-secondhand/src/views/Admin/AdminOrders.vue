@@ -27,29 +27,47 @@
           <span class="order-status" :class="order.status">{{ orderStatusMap[order.status] }}</span>
         </div>
         <div class="order-info">
-          <p><strong>用户:</strong> {{ order.user?.username || '未知用户' }}</p>
-          <p><strong>商品:</strong> {{ order.product?.name || '未知商品' }}</p>
-          <p><strong>价格:</strong> ¥{{ order.product?.price || 0 }}</p>
-          <p><strong>创建时间:</strong> {{ formatDate(order.createdAt) }}</p>
+          <!--
+            字段名对齐后端 toAdminOrderViews()：裸 Order 实体的 buyer/seller/product
+            是 @TableField(exist=false)，不会序列化，此前读 order.user?.username /
+            order.product?.name / order.createdAt 全是 undefined，
+            每张卡片都显示"未知用户 / 未知商品 / ¥0 / 空白时间"。
+          -->
+          <p><strong>买家:</strong> {{ order.buyerName || '未知用户' }}</p>
+          <p><strong>卖家:</strong> {{ order.sellerName || '未知卖家' }}</p>
+          <p><strong>商品:</strong> {{ order.productTitle || '未知商品' }}</p>
+          <p><strong>订单号:</strong> {{ order.orderNo }}</p>
+          <p><strong>价格:</strong> ¥{{ order.price ?? 0 }}</p>
+          <p><strong>创建时间:</strong> {{ formatDate(order.createdTime) }}</p>
         </div>
         <div class="order-actions">
+          <!--
+            按钮按"这个状态是否真的需要管理员介入"显示：
+            待支付订单不能直接完成（后端会 400，那等于凭空造 GMV），
+            "标记为已完成"只在待收货(2)时出现。
+          -->
           <button 
-            v-if="order.status === 0" 
+            v-if="order.status === 2" 
             @click="updateOrderStatus(order.id, 3)"
             class="btn-primary"
           >
             标记为已完成
           </button>
           <button 
-            v-if="order.status === 0" 
+            v-if="order.status === 0 || order.status === 1 || order.status === 2" 
             @click="updateOrderStatus(order.id, 4)"
             class="btn-secondary"
           >
             取消订单
           </button>
-          <button @click="deleteOrder(order.id)" class="btn-danger">
+          <button
+            v-if="order.status === 3 || order.status === 4"
+            @click="deleteOrder(order.id)"
+            class="btn-danger"
+          >
             删除订单
           </button>
+          <span v-else class="order-hint">进行中的订单不可删除</span>
         </div>
       </div>
     </div>
@@ -147,17 +165,24 @@ const fetchOrders = async () => {
 const updateOrderStatus = async (orderId, status) => {
   try {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    await axios.put(`/api/admin/orders/${orderId}/status`, {
+    const response = await axios.put(`/api/admin/orders/${orderId}/status`, {
       status: status
     }, {
       headers: {
         Authorization: `Bearer ${token}`
       }
     })
+    // 后端失败也返回 HTTP 200（ApiResponse.code 才是真结果），
+    // 不看 code 就刷新，用户会以为改成功了
+    if (response.data && response.data.code !== 200) {
+      alert(response.data.message || '更新订单状态失败')
+      return
+    }
     // 重新获取订单列表
     fetchOrders()
   } catch (error) {
     console.error('更新订单状态失败:', error)
+    alert('更新订单状态失败，请稍后重试')
   }
 }
 
@@ -165,15 +190,20 @@ const deleteOrder = async (orderId) => {
   if (confirm('确定要删除这个订单吗？')) {
     try {
       const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-      await axios.delete(`/api/admin/orders/${orderId}`, {
+      const response = await axios.delete(`/api/admin/orders/${orderId}`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
       })
+      if (response.data && response.data.code !== 200) {
+        alert(response.data.message || '删除订单失败')
+        return
+      }
       // 重新获取订单列表
       fetchOrders()
     } catch (error) {
       console.error('删除订单失败:', error)
+      alert('删除订单失败，请稍后重试')
     }
   }
 }

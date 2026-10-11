@@ -133,12 +133,20 @@ const toggleUserStatus = async (userId, currentStatus) => {
   try {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token')
     const newStatus = currentStatus === 1 ? 0 : 1
-    await axios.put(`/api/admin/users/${userId}/status`, newStatus, {
+    const response = await axios.put(`/api/admin/users/${userId}/status`, newStatus, {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
       }
     })
+    // 后端业务失败也返回 HTTP 200，真正的结果在 ApiResponse.code 里。
+    // 此前不看 code 就改本地行，会出现"界面显示已禁用、服务器其实拒绝了"
+    // （例如目标用户是管理员，或就是你自己）。
+    if (response.data && response.data.code !== 200) {
+      alert(response.data.message || '更新用户状态失败')
+      fetchUsers()
+      return
+    }
     // 更新本地用户列表
     const user = users.value.find(u => u.id === userId)
     if (user) {
@@ -146,6 +154,7 @@ const toggleUserStatus = async (userId, currentStatus) => {
     }
   } catch (error) {
     console.error('更新用户状态失败:', error)
+    alert('更新用户状态失败，请稍后重试')
   }
 }
 
