@@ -35,6 +35,12 @@ import java.util.stream.Collectors;
 @Service
 public class PostService {
 
+    /** 动态正文上限（字符数）。广场是短内容场景，超过就是刷屏或灌库 */
+    private static final int MAX_CONTENT_LENGTH = 2000;
+
+    /** 单条动态最多几张图 */
+    private static final int MAX_IMAGES = 9;
+
     @Autowired
     private PostRepository postRepository;
 
@@ -77,6 +83,16 @@ public class PostService {
         boolean hasImage = cmd.images() != null && !cmd.images().isEmpty();
         if (content.isEmpty() && !hasImage) {
             throw new BadRequestException("请输入动态内容或上传图片");
+        }
+        // 长度与张数上限必须在服务端拦：controller 收的是裸 Map，
+        // posts.content 是 TEXT(64KB)、images 是 MEDIUMTEXT，
+        // application.properties 里的 50MB 只管 multipart，管不到 JSON 请求体。
+        // 不拦的话一条动态就能塞进几十 KB 文本或几十张 base64 图，把列表接口撑爆。
+        if (content.length() > MAX_CONTENT_LENGTH) {
+            throw new BadRequestException("动态内容不能超过 " + MAX_CONTENT_LENGTH + " 个字");
+        }
+        if (hasImage && cmd.images().size() > MAX_IMAGES) {
+            throw new BadRequestException("最多上传 " + MAX_IMAGES + " 张图片");
         }
 
         Post post = new Post();
