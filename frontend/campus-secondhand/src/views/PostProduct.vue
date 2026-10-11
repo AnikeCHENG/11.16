@@ -160,6 +160,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { createProduct } from '../api/product'
+import { uploadImage } from '../api/upload'
 
 const router = useRouter()
 const submitting = ref(false)
@@ -220,7 +221,16 @@ function handleImageUpload(event) {
       canvas.width = width
       canvas.height = height
       ctx.drawImage(img, 0, 0, width, height)
-      form.images.push(canvas.toDataURL('image/jpeg', 0.7))
+      // 压缩后上传成文件，只把 /uploads/... 路径存进 products.images；
+      // 此前是 toDataURL() 把 base64 直接入库，一条商品详情响应能带上整张图
+      canvas.toBlob(async (blob) => {
+        if (!blob) return
+        try {
+          form.images.push(await uploadImage(blob, 'product.jpg'))
+        } catch (err) {
+          alert(err.message || '图片上传失败')
+        }
+      }, 'image/jpeg', 0.7)
     }
     img.src = e.target.result
   }

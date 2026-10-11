@@ -14,6 +14,7 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.stream.Collectors;
 
@@ -99,6 +100,19 @@ public class GlobalExceptionHandler {
         log.warn("请求方法不支持: method={}, supported={}", e.getMethod(), e.getSupportedHttpMethods());
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(ApiResponse.error(405, "该接口不支持 " + e.getMethod() + " 请求"));
+    }
+
+    /**
+     * 上传文件超过 {@code spring.servlet.multipart.max-file-size}。
+     *
+     * <p>这是客户端问题，而且是可预期、可自行修复的（压缩一下再传），
+     * 不该落进兜底分支变成 500 + 一整条堆栈。</p>
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<?>> handleUploadTooLarge(MaxUploadSizeExceededException e) {
+        log.warn("上传内容超过大小上限: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiResponse.error(413, "文件超过大小上限，请压缩后重试"));
     }
 
     @ExceptionHandler(Exception.class)

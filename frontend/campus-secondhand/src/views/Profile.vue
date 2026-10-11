@@ -649,6 +649,7 @@ import { updateProfile, getProfile } from '../api/user'
 import { getMyProducts, deleteProduct as deleteProductAPI } from '../api/product'
 import { getOrderList, confirmOrder, shipOrder, cancelOrderById } from '../api/order'
 import { getFavoriteList, removeFavoriteById, getHistoryList, clearHistory } from '../api/favorites'
+import { uploadImage } from '../api/upload'
 
 const router = useRouter()
 function go(path) { router.push(path) }
@@ -1365,8 +1366,16 @@ function handleAvatarChange(event) {
   
   const reader = new FileReader()
   reader.onload = (e) => {
-    compressImage(e.target.result, 200, 200, 0.8, (compressedDataUrl) => {
-      editForm.value.avatar = compressedDataUrl
+    // 压到 200×200 后上传成文件，avatar 字段只存 /uploads/... 路径。
+    // 此前是 toDataURL() 把 base64 存进 users.avatar（MEDIUMTEXT），
+    // 于是每个带用户的响应都要驮着整张头像。
+    compressImage(e.target.result, 200, 200, 0.8, async (blob) => {
+      if (!blob) return
+      try {
+        editForm.value.avatar = await uploadImage(blob, 'avatar.jpg')
+      } catch (err) {
+        alert(err.message || '头像上传失败')
+      }
     })
   }
   reader.readAsDataURL(file)
@@ -1395,7 +1404,7 @@ function compressImage(dataUrl, maxWidth, maxHeight, quality, callback) {
     const ctx = canvas.getContext('2d')
     ctx.drawImage(img, 0, 0, width, height)
     
-    callback(canvas.toDataURL('image/jpeg', quality))
+    canvas.toBlob((blob) => callback(blob), 'image/jpeg', quality)
   }
   img.src = dataUrl
 }

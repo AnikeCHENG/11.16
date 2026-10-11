@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,5 +33,17 @@ class GlobalExceptionHandlerTest {
         assertThat(resp.getBody()).isNotNull();
         assertThat(resp.getBody().getCode()).isEqualTo(405);
         assertThat(resp.getBody().getMessage()).contains("PUT");
+    }
+
+    @Test
+    @DisplayName("上传超过大小上限 -> 413 带可读提示，而不是 500 + 堆栈")
+    void upload_too_large_maps_to_413() {
+        var resp = handler.handleUploadTooLarge(
+                new MaxUploadSizeExceededException(2 * 1024 * 1024));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getCode()).isEqualTo(413);
+        assertThat(resp.getBody().getMessage()).contains("大小上限");
     }
 }

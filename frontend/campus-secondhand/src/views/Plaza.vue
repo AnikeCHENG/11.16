@@ -253,6 +253,7 @@ import { useCountUp } from '../composables/useCountUp'
 import { useReducedMotion } from '../composables/useReducedMotion'
 import { getHallProfile, getPosts, getPostTypes, createPost, getHotTopics, getActiveUsers } from '../api/plaza'
 import { toggleLike, getComments, addComment, shareProduct } from '../api/product'
+import { uploadImage } from '../api/upload'
 
 const router = useRouter()
 
@@ -315,7 +316,13 @@ const composerPlaceholder = computed(() => {
   }
 })
 
-/** 上传图片在浏览器端压到 800px / JPEG 0.7 再入库，避免 base64 把 posts.images 撑爆 */
+/**
+ * 选图后在浏览器端压到 800px / JPEG 0.7，然后**上传成文件**，只把
+ * `/uploads/...` 路径写进 posts.images。
+ *
+ * 此前是压完直接 `toDataURL()` 把 base64 入库：一条动态带几张图，
+ * posts.images 就被撑成几十 KB 的 MEDIUMTEXT，列表接口反复搬运。
+ */
 function handleImageUpload(event) {
   const files = Array.from(event.target.files || [])
   if (!files.length) return
@@ -339,7 +346,14 @@ function handleImageUpload(event) {
         canvas.width = width
         canvas.height = height
         ctx.drawImage(img, 0, 0, width, height)
-        draft.images.push(canvas.toDataURL('image/jpeg', 0.7))
+        canvas.toBlob(async (blob) => {
+          if (!blob) return
+          try {
+            draft.images.push(await uploadImage(blob, 'post.jpg'))
+          } catch (err) {
+            showToast(err.message || '图片上传失败')
+          }
+        }, 'image/jpeg', 0.7)
       }
       img.src = e.target.result
     }

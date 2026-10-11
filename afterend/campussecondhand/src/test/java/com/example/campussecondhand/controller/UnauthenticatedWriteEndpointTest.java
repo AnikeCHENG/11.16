@@ -59,7 +59,9 @@ class UnauthenticatedWriteEndpointTest {
             FavoriteController.class,
             CategoryController.class,
             BrowseHistoryController.class,
-            ProductInteractionController.class);
+            ProductInteractionController.class,
+            // 图片上传必须登录：SecurityConfig 是 permitAll，漏了就是"任何人可写服务器磁盘"
+            UploadController.class);
 
     private static boolean isWriteMapping(Method m) {
         return m.isAnnotationPresent(PostMapping.class)
