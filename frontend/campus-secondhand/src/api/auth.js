@@ -45,10 +45,25 @@ export async function register({ username, email, password, confirmPassword, cod
   return await request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, confirmPassword, code }) })
 }
 
+/**
+ * 忘记密码第一步：请求发送重置验证码。
+ *
+ * 后端刻意不区分"邮箱是否存在"，一律返回同一句话，所以前端也不要把响应当成
+ * "邮箱确实注册过"的证据——直接展示后端给的 message 即可。
+ */
 export async function forgotPassword({ email }) {
-  const body = new URLSearchParams()
-  body.append('email', email)
-  return await request('/auth/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })
+  return await request('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email })
+  })
+}
+
+/** 忘记密码第二步：用邮箱收到的验证码设置新密码 */
+export async function resetPassword({ email, code, newPassword }) {
+  return await request('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, code, newPassword })
+  })
 }
 
 // 后端使用无状态 JWT，无退出接口；前端清除本地凭证即可视为退出
@@ -59,4 +74,4 @@ export async function logout() {
   return { code: 200, message: '已退出登录' }
 }
 
-export default { login, register, sendCode, forgotPassword, logout }
+export default { login, register, sendCode, forgotPassword, resetPassword, logout }

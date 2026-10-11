@@ -191,29 +191,109 @@ public class AuthController {
         }
     }
 
-    // 忘记密码 - 发送重置邮件
+    /** 忘记密码的统一响应话术：存在与否都返回这一句，避免账号枚举 */
+    private static final String FORGOT_PASSWORD_GENERIC_REPLY =
+            "如果该邮箱已注册，验证码已发送，请查收";
+
+    /**
+     * 忘记密码 —— 发送重置验证码。
+     *
+     * <p><b>此前这是个空壳，而且是个会说话的壳：</b>方法体只打日志、根本没有发信，
+     * 却在邮箱查不到时返回 {@code 404 邮箱不存在}。前者让"忘记密码"按钮点了没反应，
+     * 后者等于免费提供一个账号枚举接口——先拿字典跑一遍邮箱确认哪些已注册，
+     * 再对确认存在的账号做撞库或钓鱼。</p>
+     *
+     * <p><b>现在的两条约束：</b></p>
+     * <ol>
+     *   <li>响应不区分邮箱是否存在，一律返回同一句
+     *       {@link #FORGOT_PASSWORD_GENERIC_REPLY}；</li>
+     *   <li>频控<b>先于</b>存在性判断执行，并且对不存在的邮箱同样占配额——
+     *       否则"第二次请求返回 429"只对已注册邮箱成立，频控又变成新的探针。</li>
+     * </ol>
+     *
+     * <p>验证码复用 {@code EmailService}：60 秒一次、每日 10 封、5 分钟有效、
+     * 错误 5 次作废，与注册验证码同一套规则。</p>
+     */
     @PostMapping("/forgot-password")
-    public ResponseEntity<ApiResponse<?>> forgotPassword(@RequestParam String email) {
+    public ResponseEntity<ApiResponse<?>> forgotPassword(
+            @RequestBody(required = false) Map<String, String> body) {
+        String email = body == null ? null : body.get("email");
+        if (email == null || email.isBlank()) {
+            return ResponseEntity.ok(ApiResponse.error(400, "邮箱不能为空"));
+        }
+        email = email.trim();
+
+        boolean registered = userService.findByEmail(email).isPresent();
         try {
-            log.info("尝试忘记密码: email={}", email);
-
-            Optional<User> userOpt = userService.findByEmail(email);
-            if (userOpt.isEmpty()) {
-                log.warn("邮箱不存在: email={}", email);
-                return ResponseEntity.ok(ApiResponse.error(404, "邮箱不存在"));
+            if (registered) {
+                emailService.sendResetCode(email);
+            } else {
+                // 不存在的邮箱也要占掉这次配额，保证两条分支的 429 行为完全一致
+                emailService.reserveSendSlot(email);
+                log.info("忘记密码：邮箱未注册，按统一话术返回: email={}", email);
             }
-
-            User user = userOpt.get();
-            log.info("找到用户: email={}", email);
-
-            // 这里可以添加发送邮件的逻辑
-            // emailService.sendResetPasswordEmail(email);
-
-            log.info("密码重置邮件已发送: email={}", email);
-            return ResponseEntity.ok(ApiResponse.success("密码重置邮件已发送"));
+        } catch (EmailService.SendTooFrequentException e) {
+            // 频控对存在/不存在的邮箱都生效，因此不构成枚举信号
+            return ResponseEntity.ok(ApiResponse.error(429, e.getMessage()));
         } catch (Exception e) {
-            log.error("忘记密码失败: ", e);
-            return ResponseEntity.ok(ApiResponse.error(500, "忘记密码失败"));
+            // 只有"邮件服务器真的挂了"才会走到这里；此时不谎报成功，但日志要留全
+            log.error("重置验证码发送失败: email={}", email, e);
+            return ResponseEntity.ok(ApiResponse.error(500, "验证码发送失败，请稍后重试"));
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(FORGOT_PASSWORD_GENERIC_REPLY, null));
+    }
+
+    /**
+     * 重置密码 —— 校验邮箱验证码后写入新密码。
+     *
+     * <p>验证码由 {@code EmailService.verify} 校验：正确即立刻删除（一次性使用），
+     * 错误累加次数、超过 5 次直接作废该验证码。</p>
+     *
+     * <p><b>注意一个已知局限：</b>本项目 JWT 是无状态的，重置密码<b>不会</b>
+     * 让此前签发的 token 失效（没有 jti / 黑名单机制）。真要做"改密即踢下线"，
+     * 需要引入 token 版本号或黑名单，属答辩"局限与展望"的内容。</p>
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<ApiResponse<?>> resetPassword(
+            @RequestBody(required = false) Map<String, String> body) {
+        String email = body == null ? null : body.get("email");
+        String code = body == null ? null : body.get("code");
+        String newPassword = body == null ? null : body.get("newPassword");
+
+        if (email == null || email.isBlank()
+                || code == null || code.isBlank()
+                || newPassword == null || newPassword.isBlank()) {
+            return ResponseEntity.ok(ApiResponse.error(400, "邮箱、验证码和新密码都不能为空"));
+        }
+        // 与注册保持同一强度：UserDTO 要求密码至少 6 位
+        if (newPassword.length() < 6) {
+            return ResponseEntity.ok(ApiResponse.error(400, "密码长度不能少于6位"));
+        }
+        email = email.trim();
+
+        try {
+            emailService.verify(email, code.trim());
+        } catch (Exception e) {
+            // 校验失败与"邮箱不存在"共用同一句提示，避免从错误文案反推账号是否存在
+            log.info("重置密码：验证码校验失败 email={}, 原因={}", email, e.getMessage());
+            return ResponseEntity.ok(ApiResponse.error(400, "验证码错误或已过期"));
+        }
+
+        Optional<User> userOpt = userService.findByEmail(email);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(400, "验证码错误或已过期"));
+        }
+
+        try {
+            User user = userOpt.get();
+            user.setPassword(passwordEncoder.encode(newPassword));
+            userService.updateUser(user);
+            log.info("密码已重置: userId={}", user.getId());
+            return ResponseEntity.ok(ApiResponse.success("密码已重置，请用新密码登录", null));
+        } catch (Exception e) {
+            log.error("重置密码写入失败: email={}", email, e);
+            return ResponseEntity.ok(ApiResponse.error(500, "重置失败，请稍后重试"));
         }
     }
 
