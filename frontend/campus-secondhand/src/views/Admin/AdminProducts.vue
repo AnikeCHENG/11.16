@@ -208,7 +208,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import admin from '../../api/admin'
 
 const products = ref([])
 const loading = ref(false)
@@ -230,11 +230,7 @@ const fetchProducts = async () => {
   try {
     loading.value = true
     error.value = ''
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.get('/api/admin/products', {
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
+    const response = await admin.get('/products', {
       params: {
         search: searchQuery.value,
         category: categoryFilter.value,
@@ -259,7 +255,6 @@ const fetchProducts = async () => {
 
 const toggleProductStatus = async (productId, currentStatus) => {
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
     let newStatus
     // 商品状态 0=下架 1=在售 2=已售出
     switch (currentStatus) {
@@ -275,12 +270,7 @@ const toggleProductStatus = async (productId, currentStatus) => {
       default:
         newStatus = 1
     }
-    const response = await axios.put(`/api/admin/products/${productId}/status`, newStatus, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    })
+    const response = await admin.put(`/products/${productId}/status`, newStatus)
     if (response.data.code === 200) {
       // 更新本地商品列表
       const product = products.value.find(p => p.id === productId)
@@ -301,12 +291,7 @@ const toggleProductStatus = async (productId, currentStatus) => {
 const viewProductDetail = async (product) => {
   try {
     loading.value = true
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.get(`/api/admin/products/${product.id}`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    })
+    const response = await admin.get(`/products/${product.id}`)
     if (response.data.code === 200) {
       selectedProduct.value = response.data.data
       showDetailModal.value = true

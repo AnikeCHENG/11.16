@@ -74,7 +74,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import admin from '../../api/admin'
 
 const messages = ref([])
 const searchQuery = ref('')
@@ -88,11 +88,7 @@ const totalPages = computed(() => {
 
 const fetchMessages = async () => {
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.get('/api/admin/messages', {
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
+    const response = await admin.get('/messages', {
       params: {
         search: searchQuery.value,
         page: page.value,
@@ -111,12 +107,7 @@ const fetchMessages = async () => {
 const deleteMessage = async (messageId) => {
   if (confirm('确定要删除这个消息吗？')) {
     try {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-      await axios.delete(`/api/admin/messages/${messageId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      })
+      await admin.delete(`/messages/${messageId}`)
       // 重新获取消息列表
       fetchMessages()
     } catch (error) {

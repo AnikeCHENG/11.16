@@ -60,7 +60,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import admin from '../../api/admin'
 
 const categories = ref([])
 const newCategory = ref({ name: '' })
@@ -68,12 +68,7 @@ const editingCategory = ref(null)
 
 const fetchCategories = async () => {
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.get('/api/admin/categories', {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    })
+    const response = await admin.get('/categories')
     categories.value = response.data.data
   } catch (error) {
     console.error('获取分类失败:', error)
@@ -87,12 +82,7 @@ const addCategory = async () => {
   }
   
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    await axios.post('/api/admin/categories', newCategory.value, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    })
+    await admin.post('/categories', newCategory.value)
     // 清空表单
     newCategory.value.name = ''
     // 重新获取分类列表
@@ -113,12 +103,7 @@ const saveCategory = async () => {
   }
   
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    await axios.put(`/api/admin/categories/${editingCategory.value.id}`, editingCategory.value, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    })
+    await admin.put(`/categories/${editingCategory.value.id}`, editingCategory.value)
     // 关闭模态框
     editingCategory.value = null
     // 重新获取分类列表
@@ -131,12 +116,7 @@ const saveCategory = async () => {
 const deleteCategory = async (categoryId) => {
   if (confirm('确定要删除这个分类吗？')) {
     try {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-      await axios.delete(`/api/admin/categories/${categoryId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      })
+      await admin.delete(`/categories/${categoryId}`)
       // 重新获取分类列表
       fetchCategories()
     } catch (error) {

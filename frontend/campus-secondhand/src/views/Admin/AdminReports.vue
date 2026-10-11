@@ -173,7 +173,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import axios from 'axios'
+import admin from '../../api/admin'
 import { ElMessage } from 'element-plus'
 
 const reports = ref([])
@@ -231,9 +231,7 @@ const fetchReports = async () => {
   try {
     loading.value = true
     error.value = ''
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.get('/api/admin/reports', {
-      headers: { Authorization: `Bearer ${token}` },
+    const response = await admin.get('/reports', {
       params: {
         search: searchQuery.value || undefined,
         status: statusFilter.value === '' ? undefined : statusFilter.value,
@@ -297,16 +295,10 @@ const submitHandle = async () => {
 
   submitting.value = true
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.put(
-      `/api/admin/reports/${currentReport.value.id}/handle`,
-      { action: handleForm.action, remark: handleForm.remark.trim() },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      }
+    // baseURL 与 Authorization 都由 src/api/admin.js 统一处理
+    const response = await admin.put(
+      `/reports/${currentReport.value.id}/handle`,
+      { action: handleForm.action, remark: handleForm.remark.trim() }
     )
     if (response.data && response.data.code === 200) {
       ElMessage.success(response.data.message || '处理成功')

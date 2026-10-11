@@ -115,7 +115,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import admin from '../../api/admin'
 
 const orders = ref([])
 const searchQuery = ref('')
@@ -140,11 +140,7 @@ const totalPages = computed(() => {
 
 const fetchOrders = async () => {
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.get('/api/admin/orders', {
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
+    const response = await admin.get('/orders', {
       params: {
         search: searchQuery.value,
         // 后端签名是 Integer status，空串会导致 400 类型转换失败
@@ -164,46 +160,26 @@ const fetchOrders = async () => {
 
 const updateOrderStatus = async (orderId, status) => {
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.put(`/api/admin/orders/${orderId}/status`, {
+    // 业务失败（HTTP 200 + code!=200）由 src/api/admin.js 的响应拦截器
+    // 统一提示并 reject，这里只处理成功路径，不会再"看起来改成功了"
+    await admin.put(`/orders/${orderId}/status`, {
       status: status
-    }, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
     })
-    // 后端失败也返回 HTTP 200（ApiResponse.code 才是真结果），
-    // 不看 code 就刷新，用户会以为改成功了
-    if (response.data && response.data.code !== 200) {
-      alert(response.data.message || '更新订单状态失败')
-      return
-    }
     // 重新获取订单列表
     fetchOrders()
   } catch (error) {
     console.error('更新订单状态失败:', error)
-    alert('更新订单状态失败，请稍后重试')
   }
 }
 
 const deleteOrder = async (orderId) => {
   if (confirm('确定要删除这个订单吗？')) {
     try {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-      const response = await axios.delete(`/api/admin/orders/${orderId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      })
-      if (response.data && response.data.code !== 200) {
-        alert(response.data.message || '删除订单失败')
-        return
-      }
+      await admin.delete(`/orders/${orderId}`)
       // 重新获取订单列表
       fetchOrders()
     } catch (error) {
       console.error('删除订单失败:', error)
-      alert('删除订单失败，请稍后重试')
     }
   }
 }

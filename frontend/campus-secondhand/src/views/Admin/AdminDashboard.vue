@@ -124,7 +124,7 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import axios from 'axios'
+import admin from '../../api/admin'
 import * as echarts from 'echarts/core'
 import { LineChart, BarChart, PieChart } from 'echarts/charts'
 import {
@@ -153,14 +153,9 @@ let trendChart = null
 let categoryChart = null
 let feeChart = null
 
-const authHeaders = () => {
-  const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-  return { headers: { Authorization: `Bearer ${token}` } }
-}
-
 const fetchStats = async () => {
   try {
-    const statsResponse = await axios.get('/api/admin/stats', authHeaders())
+    const statsResponse = await admin.get('/stats')
     if (statsResponse.data && statsResponse.data.data) {
       userCount.value = statsResponse.data.data.userCount || 0
       productCount.value = statsResponse.data.data.productCount || 0
@@ -174,7 +169,7 @@ const fetchStats = async () => {
 
 const fetchFinance = async () => {
   try {
-    const res = await axios.get('/api/admin/stats/finance', authHeaders())
+    const res = await admin.get('/stats/finance')
     if (res.data && res.data.code === 200) finance.value = res.data.data || {}
   } catch (error) {
     console.error('获取财务统计失败:', error)
@@ -204,7 +199,7 @@ async function renderTrend() {
   if (!trendRef.value) return
   let series = { userSeries: [], productSeries: [], orderSeries: [] }
   try {
-    const res = await axios.get('/api/admin/stats/trend?days=30', authHeaders())
+    const res = await admin.get('/stats/trend?days=30')
     if (res.data && res.data.code === 200) series = res.data.data || series
   } catch (error) {
     console.error('获取趋势失败:', error)
@@ -241,7 +236,7 @@ async function renderCategory() {
   if (!categoryRef.value) return
   let rows = []
   try {
-    const res = await axios.get('/api/admin/stats/category', authHeaders())
+    const res = await admin.get('/stats/category')
     if (res.data && res.data.code === 200) rows = res.data.data || []
   } catch (error) {
     console.error('获取分类热度失败:', error)

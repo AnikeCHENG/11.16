@@ -95,7 +95,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import admin from '../../api/admin'
 
 const users = ref([])
 const searchQuery = ref('')
@@ -109,11 +109,7 @@ const totalPages = computed(() => {
 
 const fetchUsers = async () => {
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const response = await axios.get('/api/admin/users', {
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
+    const response = await admin.get('/users', {
       params: {
         search: searchQuery.value,
         page: page.value,
@@ -131,30 +127,18 @@ const fetchUsers = async () => {
 
 const toggleUserStatus = async (userId, currentStatus) => {
   try {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
     const newStatus = currentStatus === 1 ? 0 : 1
-    const response = await axios.put(`/api/admin/users/${userId}/status`, newStatus, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    })
-    // 后端业务失败也返回 HTTP 200，真正的结果在 ApiResponse.code 里。
-    // 此前不看 code 就改本地行，会出现"界面显示已禁用、服务器其实拒绝了"
-    // （例如目标用户是管理员，或就是你自己）。
-    if (response.data && response.data.code !== 200) {
-      alert(response.data.message || '更新用户状态失败')
-      fetchUsers()
-      return
-    }
-    // 更新本地用户列表
+    // 业务失败（HTTP 200 + code!=200）由 src/api/admin.js 的响应拦截器统一
+    // 提示并 reject。此前不看 code 就改本地行，会出现"界面显示已禁用、
+    // 服务器其实拒绝了"（例如目标用户是管理员，或就是你自己）。
+    await admin.put(`/users/${userId}/status`, newStatus)
+    // 只有真的成功了才更新本地列表
     const user = users.value.find(u => u.id === userId)
     if (user) {
       user.status = newStatus
     }
   } catch (error) {
     console.error('更新用户状态失败:', error)
-    alert('更新用户状态失败，请稍后重试')
   }
 }
 
