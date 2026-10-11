@@ -243,6 +243,8 @@
                 <div class="order-price">{{ order.price }}</div>
                 <div class="order-actions">
                   <button v-if="order.statusCode === 0" class="order-btn primary" @click="goPay(order)">去支付</button>
+                  <!-- 发货只给卖家看：买家看到"待发货"时无货可发 -->
+                  <button v-if="order.statusCode === 1 && !order.isBuyer" class="order-btn primary" @click="shipOrderItem(order)">发货</button>
                   <button v-if="order.statusCode === 2" class="order-btn primary" @click="confirmReceive(order)">确认收货</button>
                   <button v-if="order.statusCode === 0" class="order-btn danger" @click="cancelOrderItem(order)">取消订单</button>
                   <!--
@@ -645,7 +647,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { updateProfile, getProfile } from '../api/user'
 import { getMyProducts, deleteProduct as deleteProductAPI } from '../api/product'
-import { getOrderList, confirmOrder, cancelOrder } from '../api/order'
+import { getOrderList, confirmOrder, shipOrder, cancelOrderById } from '../api/order'
 import { getFavoriteList, removeFavoriteById, getHistoryList, clearHistory } from '../api/favorites'
 
 const router = useRouter()
@@ -1255,10 +1257,35 @@ async function confirmReceive(order) {
   }
 }
 
+/**
+ * 卖家发货：待发货(1) → 待收货(2)。
+ *
+ * 之前没有这个入口，订单卡在"待发货"就再也走不动——买家永远等不到
+ * "确认收货"按钮。后端补上了 POST /orders/{id}/ship，这里给出对应按钮。
+ */
+async function shipOrderItem(order) {
+  try {
+    const res = await shipOrder(order.id)
+    if (res.code === 200) {
+      order.statusCode = 2
+      order.status = ORDER_STATUS_MAP[2].cls
+      order.statusText = ORDER_STATUS_MAP[2].text
+      alert('发货成功，等待买家确认收货')
+    } else {
+      alert(res.message || '发货失败')
+    }
+  } catch (error) {
+    console.error('发货失败:', error)
+    alert('发货失败，请稍后重试')
+  }
+}
+
 async function cancelOrderItem(order) {
   if (confirm('确定要取消这个订单吗？')) {
     try {
-      const res = await cancelOrder(order.id)
+      // 走 POST /orders/{id}/cancel：该端点只允许买家、且只取消待支付订单，
+      // 状态由后端用条件更新推进——不再由前端指定 status 值
+      const res = await cancelOrderById(order.id)
       if (res.code === 200) {
         order.statusCode = 4
         order.status = ORDER_STATUS_MAP[4].cls

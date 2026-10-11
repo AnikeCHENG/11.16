@@ -67,19 +67,21 @@ export async function getOrderList(page = 1, size = 10) {
   }
 }
 
-// 确认收货
-export async function confirmOrder(orderId) {
-  return await request(`/orders/${orderId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ status: 3 })
+// 发货：仅卖家、仅「待发货」订单，后端用 `WHERE id=? AND status=1` 的条件更新推进
+export async function shipOrder(orderId) {
+  return await request(`/orders/${orderId}/ship`, {
+    method: 'POST'
   })
 }
 
-// 取消订单
-export async function cancelOrder(orderId) {
-  return await request(`/orders/${orderId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ status: 4 })
+// 确认收货：仅买家、仅「待收货」订单，后端条件更新 `status=2 -> 3`
+//
+// 此前这里发的是 `PUT /api/orders/{id}` + `{status: 3}`：那个通用端点只校验
+// 「调用者是买卖双方之一」，于是买家能把刚下单的待支付订单直接改成已完成。
+// 后端已删除该端点，改为下面这个语义明确、角色与前置状态都绑死的接口。
+export async function confirmOrder(orderId) {
+  return await request(`/orders/${orderId}/confirm`, {
+    method: 'POST'
   })
 }
 

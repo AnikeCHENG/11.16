@@ -68,6 +68,10 @@ class OrderPaymentTest {
             insertedRecords.add(inv.getArgument(0));
             return 1;
         });
+        // 条件 UPDATE 默认"命中"：状态推进与取消都靠影响行数判成败，
+        // 不桩默认值的话 mock 返回 0，正常路径会被误判成并发冲突
+        when(orderRepository.markPaidIfPending(any(), any(), any(), any(), any())).thenReturn(1);
+        when(orderRepository.updateStatusIfMatch(any(), any(), any())).thenReturn(1);
     }
 
     private Order pendingOrder(LocalDateTime expireTime) {
@@ -158,8 +162,24 @@ class OrderPaymentTest {
     }
 
     @Test
-    void non_buyer_cannot_pay() {
+    void conditional_status_update_failure_blocks_payment_record() {
+        // 支付渠道成功，但推进状态的条件 UPDATE 拿到 0 行：
+        // 说明订单在"读状态"与"写状态"之间被并发请求改走了（典型是刚被超时任务取消）。
+        // 此时既不能把状态改回待发货，也不能记流水。
         Order order = pendingOrder(LocalDateTime.now().plusMinutes(30));
+        when(orderRepository.selectById(1L)).thenReturn(order);
+        when(orderRepository.markPaidIfPending(any(), any(), any(), any(), any())).thenReturn(0);
+
+        PayResult result = orderService.payOrder(1L, "支付宝", BUYER_ID);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getMessage()).contains("状态已变化");
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT.getCode());
+        assertThat(insertedRecords).isEmpty();
+    }
+
+    @Test
+    void non_buyer_cannot_pay() {        Order order = pendingOrder(LocalDateTime.now().plusMinutes(30));
         when(orderRepository.selectById(1L)).thenReturn(order);
 
         PayResult result = orderService.payOrder(1L, "支付宝", SELLER_ID);

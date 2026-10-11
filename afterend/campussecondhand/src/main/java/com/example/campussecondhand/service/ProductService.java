@@ -176,6 +176,21 @@ public class ProductService {
     }
 
     /**
+     * <b>下单专用</b>：仅当商品仍在售时把它锁定为已售出。
+     *
+     * <p>与 {@link #markAsSold(Long)} 的区别是并发语义：后者无条件写入，
+     * 用于「已经确定成交」的场景（如管理员操作）；本方法把「判断在售」
+     * 与「置为已售出」压进一条 UPDATE，返回 false 即代表本次没抢到，
+     * 调用方（{@link OrderService#createOrder}）必须据此放弃下单。</p>
+     *
+     * @return true 表示本次成功锁定；false 表示商品已被别人抢先买走或已下架
+     */
+    public boolean markAsSoldIfOnSale(Long id) {
+        return productRepository.markSoldIfOnSale(id,
+                ProductStatus.ON_SALE.getCode(), ProductStatus.SOLD.getCode()) > 0;
+    }
+
+    /**
      * 订单取消/超时后把商品恢复为在售。
      *
      * <p>同时清空 sold_time，否则商品虽回到在售状态却仍带着成交时间，

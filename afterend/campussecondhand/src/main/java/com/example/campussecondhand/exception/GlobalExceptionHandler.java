@@ -10,6 +10,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -82,6 +83,22 @@ public class GlobalExceptionHandler {
         log.warn("参数类型不匹配: {}={}", e.getName(), e.getValue());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(400, "参数 " + e.getName() + " 格式不正确"));
+    }
+
+    /**
+     * 请求方法不被该路径支持，例如对 {@code /api/orders/{id}} 发 PUT。
+     *
+     * <p>此前落到兜底分支被当成 500 并打印整条堆栈——但这是客户端的错，
+     * 不是服务端故障。删除 {@code PUT /api/orders/{id}} 之后尤其明显：
+     * 浏览器里未刷新的旧前端、或任何还按老契约发请求的调用方，
+     * 得到的会是"服务器内部错误"，让人以为后端崩了，实际只需换接口。</p>
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<?>> handleMethodNotSupported(
+            HttpRequestMethodNotSupportedException e) {
+        log.warn("请求方法不支持: method={}, supported={}", e.getMethod(), e.getSupportedHttpMethods());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ApiResponse.error(405, "该接口不支持 " + e.getMethod() + " 请求"));
     }
 
     @ExceptionHandler(Exception.class)

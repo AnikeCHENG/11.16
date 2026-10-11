@@ -13,7 +13,6 @@ import com.example.campussecondhand.service.ReviewService;
 import com.example.campussecondhand.entity.Order;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.entity.User;
-import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.enums.OrderStatus;
 import com.example.campussecondhand.repository.OrderRepository;
 import com.example.campussecondhand.repository.ProductRepository;
@@ -21,7 +20,6 @@ import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.OrderFeeService;
 import com.example.campussecondhand.service.OrderService;
 import com.example.campussecondhand.service.PaymentService.PayResult;
-import com.example.campussecondhand.service.ProductService;
 import com.example.campussecondhand.util.JwtUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,9 +51,6 @@ public class OrderController {
 
     @Autowired
     private ProductRepository productRepository;
-
-    @Autowired
-    private ProductService productService;
 
     @Autowired
     private OrderFeeService orderFeeService;
@@ -279,9 +274,31 @@ public class OrderController {
         }
     }
 
-    /** 订单评价回显，供详情页显示已评价内容；未评价返回 data=null 而非 404 */
+    /**
+     * 订单评价回显，供详情页显示已评价内容；未评价返回 data=null 而非 404。
+     *
+     * <p><b>可见性：仅订单双方可见，不是公开接口。</b> 评价内容里带着
+     * reviewerId / targetId / 订单号，属于买卖双方的交易记录；顾客评价若要做成
+     * 公开口碑，应另开一个按 productId 聚合、且只返回脱敏字段的端点，
+     * 而不是把订单维度的时间线直接暴露给任何人。</p>
+     */
     @GetMapping("/{id}/review")
-    public ResponseEntity<ApiResponse<?>> getReview(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<?>> getReview(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id) {
+        Optional<User> userOpt = getUserFromToken(authHeader);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+        }
+        // 先确认订单存在并校验归属，避免"猜 id 就能读到别人订单的评价"
+        Order order = orderRepository.selectById(id);
+        if (order == null) {
+            return ResponseEntity.ok(ApiResponse.error(404, "订单不存在"));
+        }
+        Long userId = userOpt.get().getId();
+        if (!userId.equals(order.getBuyerId()) && !userId.equals(order.getSellerId())) {
+            return ResponseEntity.ok(ApiResponse.error(403, "无权查看此订单的评价"));
+        }
         try {
             Review review = reviewService.findByOrderId(id);
             return ResponseEntity.ok(ApiResponse.success("获取成功",
@@ -448,55 +465,53 @@ public class OrderController {
         }
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity<ApiResponse<?>> updateOrder(
+    /**
+     * 发货：仅卖家、仅「待发货」订单。
+     *
+     * <p><b>这里替换掉了原先通用的 {@code PUT /api/orders/{id}}。</b>
+     * 那个端点只校验「调用者是买卖双方之一」，随后把请求体里的 status 原样写库，
+     * 于是：买家能把刚创建的待支付订单直接改成「待收货」白拿商品；卖家能替买家
+     * 点「确认收货」；已取消的订单也能被改回「已完成」。现在拆成两个语义明确的
+     * 端点，每个都绑定「特定角色 + 特定前置状态」。</p>
+     */
+    @PostMapping("/{id}/ship")
+    public ResponseEntity<ApiResponse<?>> shipOrder(
             @RequestHeader("Authorization") String authHeader,
-            @PathVariable Long id, 
-            @RequestBody Order order) {
+            @PathVariable Long id) {
         Optional<User> userOpt = getUserFromToken(authHeader);
         if (userOpt.isEmpty()) {
             return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
         }
-        Order existingOrder = orderRepository.selectById(id);
-        if (existingOrder == null) {
-            return ResponseEntity.ok(ApiResponse.error(404, "订单不存在"));
+        try {
+            Order shipped = orderService.shipOrder(id, userOpt.get().getId());
+            return ResponseEntity.ok(ApiResponse.success("已发货",
+                    orderService.buildCashierView(shipped)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
         }
-        Long userId = userOpt.get().getId();
-        if (!existingOrder.getBuyerId().equals(userId) && !existingOrder.getSellerId().equals(userId)) {
-            return ResponseEntity.ok(ApiResponse.error(403, "无权操作此订单"));
+    }
+
+    /**
+     * 确认收货：仅买家、仅「待收货」订单。
+     *
+     * <p>状态用 {@code WHERE id=? AND status=待收货} 的条件 UPDATE 推进，
+     * 影响行数为 0 即返回失败——避免并发下「取消」与「确认收货」互相覆盖。</p>
+     */
+    @PostMapping("/{id}/confirm")
+    public ResponseEntity<ApiResponse<?>> confirmReceipt(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id) {
+        Optional<User> userOpt = getUserFromToken(authHeader);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
         }
-        
-        // 检查订单状态变更为已完成 / 已取消，并同步商品状态
-        if (order.getStatus() != null && !order.getStatus().equals(existingOrder.getStatus())) {
-            OrderStatus target = OrderStatus.fromCode(order.getStatus());
-            if (target == null) {
-                return ResponseEntity.ok(ApiResponse.error(400, "非法的订单状态值"));
-            }
-            if (target == OrderStatus.COMPLETED) {
-                // 确认收货：商品保持已售出
-                productService.markAsSold(existingOrder.getProductId());
-            } else if (target == OrderStatus.CANCELLED) {
-                // 取消订单：必须释放商品，否则商品永远无法再次购买
-                productService.markAsOnSale(existingOrder.getProductId());
-            }
+        try {
+            Order completed = orderService.confirmReceipt(id, userOpt.get().getId());
+            return ResponseEntity.ok(ApiResponse.success("确认收货成功",
+                    orderService.buildCashierView(completed)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
         }
-        
-        // 只允许更新状态字段，防止越权修改价格/买卖家等
-        if (order.getStatus() != null) {
-            existingOrder.setStatus(order.getStatus());
-        }
-        if (order.getPaidTime() != null) {
-            existingOrder.setPaidTime(order.getPaidTime());
-        }
-        if (order.getPaymentMethod() != null) {
-            existingOrder.setPaymentMethod(order.getPaymentMethod());
-        }
-        if (order.getTransactionId() != null) {
-            existingOrder.setTransactionId(order.getTransactionId());
-        }
-        existingOrder.setUpdatedTime(java.time.LocalDateTime.now());
-        orderRepository.updateById(existingOrder);
-        return ResponseEntity.ok(ApiResponse.success("更新成功", existingOrder));
     }
 
     @DeleteMapping("/{id}")
@@ -514,6 +529,12 @@ public class OrderController {
         Long userId = userOpt.get().getId();
         if (!order.getBuyerId().equals(userId) && !order.getSellerId().equals(userId)) {
             return ResponseEntity.ok(ApiResponse.error(403, "无权操作此订单"));
+        }
+        // 硬删除不可逆：进行中的订单（待支付/待发货/待收货）删掉就等于抹掉交易凭证，
+        // 商品已锁定、钱已收，却再也查不到这笔单子。只允许清理已终结的订单。
+        if (!OrderStatus.isCompleted(order.getStatus()) && !OrderStatus.isCancelled(order.getStatus())) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "仅已完成或已取消的订单可以删除"));
         }
         orderRepository.deleteById(id);
         return ResponseEntity.ok(ApiResponse.success("删除成功", null));

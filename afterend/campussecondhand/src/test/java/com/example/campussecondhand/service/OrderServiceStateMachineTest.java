@@ -16,7 +16,10 @@ import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +49,23 @@ class OrderServiceStateMachineTest {
         orderService = new OrderService(orderRepository, mock(PaymentRecordRepository.class),
                 productRepository, userRepository, productService, new OrderFeeService(),
                 new MockPaymentServiceImpl(), new ResourcelessTransactionTemplate(), 30);
+
+        // 默认：条件 UPDATE "命中"（返回 1 行）、商品抢占成功。
+        // 取消/支付/发货现在都靠"条件 UPDATE 影响行数"判成败，不桩默认值的话
+        // mock 返回 0，所有正常路径都会被当成并发冲突。需要模拟抢不到的用例
+        // 在本方法内单独覆盖。
+        when(orderRepository.updateStatusIfMatch(anyLong(), anyInt(), anyInt())).thenReturn(1);
+        when(productService.markAsSoldIfOnSale(anyLong())).thenReturn(true);
+    }
+
+    private com.example.campussecondhand.entity.Product onSaleProduct() {
+        var product = new com.example.campussecondhand.entity.Product();
+        product.setId(100L);
+        product.setUserId(3L);
+        product.setTitle("捷安特山地车");
+        product.setPrice(new BigDecimal("1299.00"));
+        product.setStatus(ProductStatus.ON_SALE.getCode());
+        return product;
     }
 
     private Order pendingOrder(LocalDateTime expireTime) {
@@ -155,7 +175,53 @@ class OrderServiceStateMachineTest {
                 .isInstanceOf(OrderService.OrderBusinessException.class)
                 .hasMessageContaining("已售出");
         // 校验失败时绝不能锁定商品
-        verify(productService, never()).markAsSold(anyLong());
+        verify(productService, never()).markAsSoldIfOnSale(anyLong());
+    }
+
+    @Test
+    void create_locks_product_with_conditional_update_before_inserting_order() {
+        when(productRepository.selectById(100L)).thenReturn(onSaleProduct());
+        when(productService.markAsSoldIfOnSale(100L)).thenReturn(true);
+
+        Order created = orderService.createOrder(100L, 2L);
+
+        assertThat(created.getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT.getCode());
+        assertThat(created.getSellerId()).isEqualTo(3L);
+        assertThat(created.getPrice()).isEqualByComparingTo(new BigDecimal("1299.00"));
+        // 顺序有意义：必须先抢占商品再落订单，否则会出现"商品已被别人买走、
+        // 却留下一条待支付订单"的脏数据
+        var ordered = inOrder(productService, orderRepository);
+        ordered.verify(productService).markAsSoldIfOnSale(100L);
+        ordered.verify(orderRepository).insert(created);
+    }
+
+    @Test
+    void create_fails_when_conditional_lock_returns_zero_rows() {
+        // 竞态的真实形态：selectById 看到的是"在售"（快照已过期），
+        // 但数据库里的条件 UPDATE 返回 0 行——商品已经被另一个请求抢走。
+        when(productRepository.selectById(100L)).thenReturn(onSaleProduct());
+        when(productService.markAsSoldIfOnSale(100L)).thenReturn(false);
+
+        assertThatThrownBy(() -> orderService.createOrder(100L, 2L))
+                .isInstanceOf(OrderService.OrderBusinessException.class)
+                .hasMessageContaining("已被抢先购买");
+        // 抢不到就绝不能留下订单
+        verify(orderRepository, never()).insert(any(Order.class));
+    }
+
+    @Test
+    void cancel_gives_up_when_status_update_hits_zero_rows() {
+        // 取消前订单还是待支付，但条件 UPDATE 拿到 0 行：买家在毫秒之间支付成功了。
+        // 这时必须放弃取消，尤其不能释放商品——钱已收，货必须锁死。
+        Order order = pendingOrder(LocalDateTime.now().plusMinutes(30));
+        when(orderRepository.selectById(1L)).thenReturn(order);
+        when(orderRepository.updateStatusIfMatch(1L, OrderStatus.PENDING_PAYMENT.getCode(),
+                OrderStatus.CANCELLED.getCode())).thenReturn(0);
+
+        assertThatThrownBy(() -> orderService.cancelOrder(1L))
+                .isInstanceOf(OrderService.OrderBusinessException.class)
+                .hasMessageContaining("状态已变化");
+        verify(productService, never()).markAsOnSale(anyLong());
     }
 
     @Test

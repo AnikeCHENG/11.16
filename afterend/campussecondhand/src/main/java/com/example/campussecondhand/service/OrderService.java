@@ -163,6 +163,14 @@ public class OrderService {
         order.setSellerIncome(price.add(order.getShippingFee()).subtract(fee)
                 .setScale(2, RoundingMode.HALF_UP));
 
+        // 抢占商品：条件 UPDATE，status 必须仍是「在售」才能改成「已售出」。
+        // 判断与写入合并在同一条 SQL，两个买家同时下单时只有一个能拿到 1 行，
+        // 另一个拿到 0 行并在此被拦下——二手商品只有一份，绝不能出两张订单。
+        // 本方法带 @Transactional，若随后的 insert 失败，这次锁定会一并回滚。
+        if (!productService.markAsSoldIfOnSale(productId)) {
+            throw new OrderBusinessException("商品已被抢先购买");
+        }
+
         try {
             orderRepository.insert(order);
         } catch (org.springframework.dao.DuplicateKeyException e) {
@@ -170,8 +178,6 @@ public class OrderService {
             orderRepository.insert(order);
         }
 
-        // 订单落库成功后再锁定商品，避免脏订单占用商品
-        productService.markAsSold(productId);
         return order;
     }
 
@@ -189,8 +195,7 @@ public class OrderService {
         if (!OrderStatus.isPendingPayment(order.getStatus()) || !isExpired(order)) {
             return false;
         }
-        doCancel(order);
-        return true;
+        return doCancel(order);
     }
 
     /**
@@ -198,13 +203,23 @@ public class OrderService {
      *
      * <p>两步都必须做。只改订单状态会让商品永久停在「已售出」，
      * 之后无人能再购买它。</p>
+     *
+     * <p><b>先条件改状态，成功后才释放商品。</b> 若状态已被并发请求推进
+     * （典型是买家刚好支付成功），本次取消不得生效，更不得释放商品——
+     * 否则会出现「钱已收、货重新上架」的双重损失。</p>
+     *
+     * @return true 表示确实由本次调用完成了取消
      */
-    private void doCancel(Order order) {
-        LocalDateTime now = LocalDateTime.now();
+    private boolean doCancel(Order order) {
+        int updated = orderRepository.updateStatusIfMatch(order.getId(),
+                OrderStatus.PENDING_PAYMENT.getCode(), OrderStatus.CANCELLED.getCode());
+        if (updated == 0) {
+            return false;
+        }
         order.setStatus(OrderStatus.CANCELLED.getCode());
-        order.setUpdatedTime(now);
-        orderRepository.updateById(order);
+        order.setUpdatedTime(LocalDateTime.now());
         productService.markAsOnSale(order.getProductId());
+        return true;
     }
 
     /** 判断订单是否已过支付截止时间；未设置 expire_time 的历史订单视为未过期 */
@@ -241,11 +256,14 @@ public class OrderService {
 
         // 过期检查：先走取消逻辑并释放商品，再返回失败（不可抛异常，见方法注释）
         if (isExpired(order)) {
-            if (OrderStatus.isPendingPayment(order.getStatus())) {
-                doCancel(order);
+            boolean cancelled = OrderStatus.isPendingPayment(order.getStatus()) && doCancel(order);
+            if (cancelled) {
+                log.info("订单支付超时已自动取消: orderNo={}", order.getOrderNo());
+                return PayResult.fail("订单已超时取消");
             }
-            log.info("订单支付超时已自动取消: orderNo={}", order.getOrderNo());
-            return PayResult.fail("订单已超时取消");
+            // 取消没生效：状态已被并发请求推进，此时不能宣称"已取消"，如实让用户刷新
+            log.info("订单超时但状态已变化，取消未生效: orderNo={}", order.getOrderNo());
+            return PayResult.fail("订单状态已变化，请刷新后重试");
         }
 
         // 状态守卫：防止对同一订单重复支付
@@ -260,12 +278,27 @@ public class OrderService {
         }
 
         LocalDateTime now = LocalDateTime.now();
+
+        // 条件更新：只有订单当前仍是「待支付」才推进为「待发货」。
+        // 改用 updateById 时，「刚被定时任务取消」或「重复提交」都会静默覆盖状态，
+        // 于是已取消的订单又变成待发货，还多出一条流水。
+        int updated = orderRepository.markPaidIfPending(order.getId(),
+                OrderStatus.PENDING_PAYMENT.getCode(),
+                OrderStatus.PENDING_SHIPMENT.getCode(),
+                payMethod, channelResult.getTradeNo());
+        if (updated == 0) {
+            // 状态在支付渠道回调前后被改走（并发取消/重复提交）：
+            // 本次不推进状态、不记流水，让用户刷新后看到真实状态
+            log.warn("支付状态推进失败，订单状态已变化: orderNo={}", order.getOrderNo());
+            return PayResult.fail("订单状态已变化，本次未扣款，请刷新后重试");
+        }
+
+        // 回填内存对象，供调用方（收银台响应）直接展示
         order.setStatus(OrderStatus.PENDING_SHIPMENT.getCode());
         order.setPaymentMethod(payMethod);
         order.setPaidTime(now);
         order.setUpdatedTime(now);
         order.setTransactionId(channelResult.getTradeNo());
-        orderRepository.updateById(order);
 
         // 落支付流水。amount 为买家实付（订单价 + 运费），不含卖家承担的服务费
         paymentRecordRepository.insert(buildPaymentRecord(order, payMethod,
@@ -302,7 +335,67 @@ public class OrderService {
             throw new OrderBusinessException("当前订单状态（"
                     + labelOf(order.getStatus()) + "）不允许取消");
         }
-        doCancel(order);
+        if (!doCancel(order)) {
+            // 上面的检查与这里的 UPDATE 之间被并发请求插队（典型是刚好支付成功）
+            throw new OrderBusinessException("订单状态已变化，取消失败，请刷新后重试");
+        }
+        return order;
+    }
+
+    /**
+     * 卖家发货：待发货（1）→ 待收货（2）。
+     *
+     * <p>此前项目里没有这两个端点，前端"确认收货"走的是通用的
+     * {@code PUT /api/orders/{id}}——它只校验调用者是买卖双方之一，
+     * 于是买家可以把待支付订单直接改成待收货、卖家可以替买家确认收货，
+     * 状态机形同虚设。现在每一步都要求<b>特定角色 + 特定前置状态</b>。</p>
+     *
+     * @param orderId 订单主键
+     * @param userId  当前登录用户，必须是该订单的卖家
+     */
+    @Transactional
+    public Order shipOrder(Long orderId, Long userId) {
+        Order order = requireOrder(orderId);
+        if (order.getSellerId() == null || !order.getSellerId().equals(userId)) {
+            throw new OrderBusinessException("只有卖家可以发货");
+        }
+        int updated = orderRepository.updateStatusIfMatch(orderId,
+                OrderStatus.PENDING_SHIPMENT.getCode(), OrderStatus.PENDING_RECEIPT.getCode());
+        if (updated == 0) {
+            throw new OrderBusinessException("当前订单状态（"
+                    + labelOf(order.getStatus()) + "）不允许发货");
+        }
+        order.setStatus(OrderStatus.PENDING_RECEIPT.getCode());
+        order.setUpdatedTime(LocalDateTime.now());
+        log.info("卖家 {} 发货: orderNo={}", userId, order.getOrderNo());
+        return order;
+    }
+
+    /**
+     * 买家确认收货：待收货（2）→ 已完成（3）。
+     *
+     * <p>// TODO(放款)：确认收货时应在同一事务里把 seller_income 记入卖家账户余额
+     * 并写一条资金流水（当前项目没有 accounts / 流水表，属 P1）。</p>
+     *
+     * @param orderId 订单主键
+     * @param userId  当前登录用户，必须是该订单的买家
+     */
+    @Transactional
+    public Order confirmReceipt(Long orderId, Long userId) {
+        Order order = requireOrder(orderId);
+        if (order.getBuyerId() == null || !order.getBuyerId().equals(userId)) {
+            throw new OrderBusinessException("只有买家可以确认收货");
+        }
+        int updated = orderRepository.updateStatusIfMatch(orderId,
+                OrderStatus.PENDING_RECEIPT.getCode(), OrderStatus.COMPLETED.getCode());
+        if (updated == 0) {
+            throw new OrderBusinessException("当前订单状态（"
+                    + labelOf(order.getStatus()) + "）不允许确认收货");
+        }
+        order.setStatus(OrderStatus.COMPLETED.getCode());
+        order.setCompletedTime(LocalDateTime.now());
+        order.setUpdatedTime(LocalDateTime.now());
+        log.info("买家 {} 确认收货: orderNo={}", userId, order.getOrderNo());
         return order;
     }
 
@@ -342,8 +435,9 @@ public class OrderService {
                             || !isExpired(fresh)) {
                         return false;
                     }
-                    doCancel(fresh);
-                    return true;
+                    // 条件 UPDATE 才是真正的判据：selectById 之后、UPDATE 之前
+                    // 买家仍可能支付成功，那时 doCancel 返回 false，本次不计数
+                    return doCancel(fresh);
                 });
                 if (Boolean.TRUE.equals(done)) {
                     cancelled++;

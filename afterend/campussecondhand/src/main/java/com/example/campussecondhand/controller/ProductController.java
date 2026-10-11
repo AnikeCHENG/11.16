@@ -1,18 +1,25 @@
 package com.example.campussecondhand.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.example.campussecondhand.common.PageParam;
 import com.example.campussecondhand.common.PageResult;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import com.example.campussecondhand.common.ApiResponse;
+import com.example.campussecondhand.entity.Order;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.enums.ConditionLevel;
+import com.example.campussecondhand.enums.OrderStatus;
+import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.entity.User;
+import com.example.campussecondhand.repository.OrderRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.BrowseHistoryService;
 import com.example.campussecondhand.service.ProductService;
 import com.example.campussecondhand.util.JwtUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,6 +35,8 @@ import java.util.Optional;
 @CrossOrigin(origins = "*")
 public class ProductController {
 
+    private static final Logger log = LoggerFactory.getLogger(ProductController.class);
+
     @Autowired
     private ProductService productService;
 
@@ -36,6 +45,9 @@ public class ProductController {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private OrderRepository orderRepository;
 
     @Autowired
     private JwtUtil jwtUtil;
@@ -218,23 +230,66 @@ public class ProductController {
             Product created = productService.create(product);
             return ResponseEntity.ok(ApiResponse.success("发布成功", created));
         } catch (Exception e) {
-            return ResponseEntity.ok(ApiResponse.error(500, "发布失败: " + e.getMessage()));
+            log.error("发布商品失败: userId 见请求上下文", e);
+            return ResponseEntity.ok(ApiResponse.error(500, "发布失败，请稍后重试"));
         }
     }
 
+    /**
+     * 编辑商品：<b>仅商品归属者本人</b>，且已成交的商品不允许改动价格。
+     *
+     * <p><b>此前本端点没有任何鉴权</b>（不读 {@code Authorization}、不校验归属），
+     * 而 {@code SecurityConfig} 是 {@code .anyRequest().permitAll()}，
+     * 于是任何人——包括未登录访客——都能改掉任意在售商品的标题、价格、
+     * 描述和图片，把 12999 元的相机改成 1 元。这是本项目最容易被利用的漏洞，
+     * 因为不需要注册、不需要时序、一条 curl 就能复现。</p>
+     *
+     * <p>价格额外单独上锁：商品已售出，或存在进行中的订单（待支付/待发货/待收货）
+     * 时，价格已经是订单与支付流水的凭证，改动它会让订单金额与商品详情对不上。</p>
+     */
     @PutMapping("/update/{id}")
     public ResponseEntity<ApiResponse<?>> update(
             @PathVariable Long id,
+            @RequestHeader("Authorization") String authHeader,
             @RequestBody Map<String, Object> params) {
         try {
+            Optional<User> userOpt = resolveUser(authHeader);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+            }
+            Long currentUserId = userOpt.get().getId();
+
             Product product = productService.findById(id);
             if (product == null) {
                 return ResponseEntity.ok(ApiResponse.error(404, "商品不存在"));
             }
+            // 归属校验：不是自己的商品一律 403，且不透露价格等细节
+            if (!Objects.equals(product.getUserId(), currentUserId)) {
+                return ResponseEntity.ok(ApiResponse.error(403, "无权操作该商品"));
+            }
+
+            BigDecimal newPrice = null;
+            if (params.get("price") != null) {
+                try {
+                    newPrice = new BigDecimal(String.valueOf(params.get("price")).trim());
+                } catch (NumberFormatException e) {
+                    return ResponseEntity.ok(ApiResponse.error(400, "价格格式不正确"));
+                }
+                if (newPrice.compareTo(BigDecimal.ZERO) <= 0) {
+                    return ResponseEntity.ok(ApiResponse.error(400, "价格必须大于 0"));
+                }
+                // 已售出 / 有进行中订单：价格已写入订单与流水，禁止改动（传相同价格不算改动）
+                boolean priceChanged = product.getPrice() == null
+                        || newPrice.compareTo(product.getPrice()) != 0;
+                if (priceChanged && isPriceLocked(product)) {
+                    return ResponseEntity.ok(ApiResponse.error(403,
+                            "商品已售出或有进行中的订单，不能修改价格"));
+                }
+            }
 
             if (params.get("title") != null) product.setTitle((String) params.get("title"));
             if (params.get("description") != null) product.setDescription((String) params.get("description"));
-            if (params.get("price") != null) product.setPrice(new BigDecimal(params.get("price").toString()));
+            if (newPrice != null) product.setPrice(newPrice);
             if (params.get("originalPrice") != null) product.setOriginalPrice(new BigDecimal(params.get("originalPrice").toString()));
 if (params.get("category") != null) product.setCategory((String) params.get("category"));
             // 成色与瑕疵同样允许编辑，但等级必须落在 0~4，避免前端传脏值写进库
@@ -258,8 +313,50 @@ if (params.get("category") != null) product.setCategory((String) params.get("cat
             Product updated = productService.update(product);
             return ResponseEntity.ok(ApiResponse.success("更新成功", updated));
         } catch (Exception e) {
-            return ResponseEntity.ok(ApiResponse.error(500, "更新失败: " + e.getMessage()));
+            // 详情只进服务端日志：异常消息可能含 SQL 片段、表名或约束名，
+            // 拼进响应体等于免费给攻击者做信息收集
+            log.error("更新商品失败: id={}", id, e);
+            return ResponseEntity.ok(ApiResponse.error(500, "更新失败，请稍后重试"));
         }
+    }
+
+    /**
+     * 解析 {@code Authorization} 头为当前用户；缺失或无效返回 empty。
+     *
+     * <p>与 {@code OrderController#getUserFromToken} 行为一致，
+     * 供本类的写接口复用，避免每个方法各写一遍 try-catch。</p>
+     */
+    private Optional<User> resolveUser(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return Optional.empty();
+        }
+        try {
+            String username = jwtUtil.getUsernameFromToken(authHeader.substring(7));
+            if (username == null) {
+                return Optional.empty();
+            }
+            return userRepository.findByUsername(username);
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 商品是否"价格已定"：已售出，或存在进行中的订单。
+     *
+     * <p>进行中 = 待支付/待发货/待收货。已取消、已完成的订单不再锁定商品，
+     * 与 {@code OrderStatus} 语义保持一致。</p>
+     */
+    private boolean isPriceLocked(Product product) {
+        if (ProductStatus.isSold(product.getStatus())) {
+            return true;
+        }
+        Long active = orderRepository.selectCount(new QueryWrapper<Order>()
+                .eq("product_id", product.getId())
+                .in("status", OrderStatus.PENDING_PAYMENT.getCode(),
+                        OrderStatus.PENDING_SHIPMENT.getCode(),
+                        OrderStatus.PENDING_RECEIPT.getCode()));
+        return active != null && active > 0;
     }
 
     @DeleteMapping("/delete/{id}")
@@ -325,48 +422,15 @@ if (params.get("category") != null) product.setCategory((String) params.get("cat
         }
     }
 
-    // 批量更新商品图片和删除没有对应图片的商品
-    /**
-     * 图片迁移端点。<b>一次性数据迁移脚本专用，不对用户暴露。</b>
-     *
-     * <p>它必须遍历<b>全部</b>在售商品，逐个改写图片路径或删除无图商品，
-     * 因此这里刻意调用不加分页的 {@code ProductService#findAllAvailable()}：
-     * 一旦改成按页遍历，只会处理到第一页就静默漏掉其余商品。</p>
-     */
-    @PostMapping("/update-images")
-    public ResponseEntity<ApiResponse<?>> updateImages(@RequestBody Map<String, Object> params) {
-        try {
-            List<String> imageNames = (List<String>) params.get("imageNames");
-            if (imageNames == null || imageNames.isEmpty()) {
-                return ResponseEntity.ok(ApiResponse.error(400, "图片列表不能为空"));
-            }
-
-            // 获取所有商品
-            List<Product> products = productService.findAllAvailable();
-            int updatedCount = 0;
-            int deletedCount = 0;
-
-            for (Product product : products) {
-                String title = product.getTitle();
-                if (imageNames.contains(title)) {
-                    // 更新商品图片
-                    String imagePath = "/src/images/" + title + ".avif";
-                    product.setImages(imagePath);
-                    productService.update(product);
-                    updatedCount++;
-                } else {
-                    // 删除没有对应图片的商品
-                    productService.delete(product.getId());
-                    deletedCount++;
-                }
-            }
-
-            return ResponseEntity.ok(ApiResponse.success("操作成功", Map.of(
-                    "updated", updatedCount,
-                    "deleted", deletedCount
-            )));
-        } catch (Exception e) {
-            return ResponseEntity.ok(ApiResponse.error(500, "操作失败: " + e.getMessage()));
-        }
-    }
+    // 原先这里有一个 @PostMapping("/update-images") 图片迁移端点，已删除。
+    //
+    // 它没有任何鉴权，而 SecurityConfig 是 .anyRequest().permitAll()，
+    // 也就是说未登录的人一封 POST 就能调用它。端点逻辑是「遍历全部在售商品，
+    // 标题不在请求体 imageNames 里的，一律 productService.delete()」，
+    // 于是 POST {"imageNames":["任意一个不存在的标题"]} 会把整个商品目录清空。
+    // 一次请求、结果确定、无需登录——比任何竞态漏洞都更容易触发。
+    //
+    // 它本身也只是个一次性数据修补工具（图片路径写死 /src/images/），没有运行期用途。
+    // 将来若确需重跑，应仿照 DevMigrationController 放到 @Profile("dev") 下，
+    // 而不是放回公开接口。删除理由见 ProductControllerUnauthenticatedWriteTest。
 }
