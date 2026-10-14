@@ -80,12 +80,24 @@ def connect():
     )
 
 
-def backup(cur, tables):
+def backup(tables):
+    """导出这些表的当前内容，返回文件路径。
+
+    **必须用独立连接**：如果复用迁移写入用的那个连接，在同一未提交事务里
+    SELECT 会读到自己刚写的值，备份下来的就变成"改完之后"的状态。
+
+    这不是假设。2026-10-12 那版把 backup() 放在 UPDATE 循环之后调用，
+    生成的文件里 `/uploads/` 出现 4 次、`data:image` 出现 0 次 —— 它记录的是
+    改完以后，对回滚毫无价值，直到真要回滚时才发现。所以这里既提前调用
+    （见 main 里的两遍式流程），又用独立连接兜底。
+    """
+    conn = connect()
+    cur = conn.cursor()
     os.makedirs(BACKUP_DIR, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    path = os.path.join(BACKUP_DIR, "campus_secondhand-images-%s.sql" % stamp)
+    path = os.path.join(BACKUP_DIR, "campus_secondhand-images-PRE-migration-%s.sql" % stamp)
     with open(path, "w", encoding="utf-8") as f:
-        f.write("-- 图片落盘迁移前的备份 (%s)\n\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+        f.write("-- 图片落盘迁移【之前】的备份 (%s)\n\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
         for t in tables:
             cur.execute("SHOW CREATE TABLE `%s`" % t)
             f.write("DROP TABLE IF EXISTS `%s`;\n%s;\n\n" % (t, cur.fetchone()[1]))
@@ -103,6 +115,7 @@ def backup(cur, tables):
                 f.write("INSERT INTO `%s` (`%s`) VALUES (%s);\n"
                         % (t, "`,`".join(cols), ",".join(vals)))
             f.write("\n")
+    conn.close()
     return path
 
 
@@ -160,6 +173,10 @@ def main():
 
     print("模式：%s" % ("干跑（不写文件、不改库）" if dry else "执行"))
     print("-" * 62)
+
+    # 第一遍：只读 + 算出新值，不碰数据库。
+    # 写入必须推迟到备份之后，否则备份拍到的是改完的状态。
+    plan = []
     for table, column in TARGETS:
         cur.execute(
             "SELECT COUNT(*) FROM `%s` WHERE `%s` LIKE '%%data:image%%'" % (table, column))
@@ -174,12 +191,11 @@ def main():
         for rid, value in cur.fetchall():
             new_value, n = rewrite(value, dry, counter)
             if n:
-                pending.append((rid, new_value, value))
+                pending.append((rid, new_value))
         print("  %-22s %d 行 / 抽出 %d 张图" % ("%s.%s" % (table, column), rows,
-                                              sum(1 for _ in pending)))
-        if not dry and pending:
-            cur.executemany("UPDATE `%s` SET `%s` = %%s WHERE id = %%s" % (table, column),
-                            [(nv, rid) for rid, nv, _ in pending])
+                                              len(pending)))
+        if pending:
+            plan.append((table, column, pending))
 
     print("-" * 62)
     print("涉及 %d 行，抽出 %d 张图，合计 %.1f KB"
@@ -195,8 +211,14 @@ def main():
         print("没有需要迁移的数据。")
         return
 
-    path = backup(cur, [t for t, _ in TARGETS])
+    # 备份必须早于任何 UPDATE，且用独立连接（见 backup 的 docstring）
+    path = backup([t for t, _ in TARGETS])
     print("已备份到 %s" % path)
+
+    # 第二遍：真正落库
+    for table, column, pending in plan:
+        cur.executemany("UPDATE `%s` SET `%s` = %%s WHERE id = %%s" % (table, column),
+                        [(nv, rid) for rid, nv in pending])
     conn.commit()
     print("已提交。落盘目录：%s" % UPLOAD_ROOT)
 
