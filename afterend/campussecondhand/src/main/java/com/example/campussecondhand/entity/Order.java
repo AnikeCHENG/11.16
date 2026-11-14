@@ -58,9 +58,35 @@ public class Order {
     @TableField("paid_time")
     private LocalDateTime paidTime;
 
+    /** 卖家发货时间：自动确认收货的计时起点 */
+    @TableField("shipped_time")
+    private LocalDateTime shippedTime;
+
     /** 支付截止时间（下单时间 + 30 分钟），过期后由惰性检查自动取消 */
     @TableField("expire_time")
     private LocalDateTime expireTime;
+
+    /** 申请退款前的状态（1 待发货 / 2 待收货）；拒绝退款时按它回退 */
+    @TableField("refund_from_status")
+    private Integer refundFromStatus;
+
+    @TableField("refund_reason")
+    private String refundReason;
+
+    /** 卖家/管理员对退款申请的处理说明 */
+    @TableField("refund_reply")
+    private String refundReply;
+
+    @TableField("refund_apply_time")
+    private LocalDateTime refundApplyTime;
+
+    /** 退款完成或驳回时间 */
+    @TableField("refund_time")
+    private LocalDateTime refundTime;
+
+    /** 退款金额 = 成交价 + 运费 */
+    @TableField("refund_amount")
+    private BigDecimal refundAmount;
 
     @TableField("completed_time")
     private LocalDateTime completedTime;
@@ -125,6 +151,27 @@ public class Order {
 
     public LocalDateTime getPaidTime() { return paidTime; }
     public void setPaidTime(LocalDateTime paidTime) { this.paidTime = paidTime; }
+
+    public LocalDateTime getShippedTime() { return shippedTime; }
+    public void setShippedTime(LocalDateTime shippedTime) { this.shippedTime = shippedTime; }
+
+    public Integer getRefundFromStatus() { return refundFromStatus; }
+    public void setRefundFromStatus(Integer refundFromStatus) { this.refundFromStatus = refundFromStatus; }
+
+    public String getRefundReason() { return refundReason; }
+    public void setRefundReason(String refundReason) { this.refundReason = refundReason; }
+
+    public String getRefundReply() { return refundReply; }
+    public void setRefundReply(String refundReply) { this.refundReply = refundReply; }
+
+    public LocalDateTime getRefundApplyTime() { return refundApplyTime; }
+    public void setRefundApplyTime(LocalDateTime refundApplyTime) { this.refundApplyTime = refundApplyTime; }
+
+    public LocalDateTime getRefundTime() { return refundTime; }
+    public void setRefundTime(LocalDateTime refundTime) { this.refundTime = refundTime; }
+
+    public BigDecimal getRefundAmount() { return refundAmount; }
+    public void setRefundAmount(BigDecimal refundAmount) { this.refundAmount = refundAmount; }
 
     public LocalDateTime getCompletedTime() { return completedTime; }
     public void setCompletedTime(LocalDateTime completedTime) { this.completedTime = completedTime; }

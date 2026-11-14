@@ -14,6 +14,7 @@ import com.example.campussecondhand.repository.OrderRepository;
 import com.example.campussecondhand.repository.ProductRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.AdminStatsService;
+import com.example.campussecondhand.service.OrderService;
 import com.example.campussecondhand.service.PenaltyService;
 import com.example.campussecondhand.service.ReportService;
 import com.example.campussecondhand.util.JwtUtil;
@@ -36,6 +37,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -75,6 +77,8 @@ class AdminControllerGuardTest {
     private JwtUtil jwtUtil;
     @Mock
     private AdminStatsService adminStatsService;
+    @Mock
+    private OrderService orderService;
     @InjectMocks
     private AdminController controller;
 
@@ -194,17 +198,54 @@ class AdminControllerGuardTest {
     }
 
     @Test
-    @DisplayName("待收货 → 已完成：放行并补上完成时间")
+    @DisplayName("待收货 → 已完成：走领域服务完成放款，不再只改 status")
     void allows_pending_receipt_to_completed() {
         Order o = order(1L, OrderStatus.PENDING_RECEIPT.getCode());
         when(orderRepository.selectById(1L)).thenReturn(o);
+        when(orderService.adminComplete(1L)).thenAnswer(inv -> {
+            o.setStatus(OrderStatus.COMPLETED.getCode());
+            o.setCompletedTime(java.time.LocalDateTime.now());
+            return o;
+        });
 
         var resp = controller.updateOrderStatus(AUTH, 1L, Map.of("status", "3"));
 
         assertThat(codeOf(resp)).isEqualTo(200);
         assertThat(o.getStatus()).isEqualTo(OrderStatus.COMPLETED.getCode());
         assertThat(o.getCompletedTime()).isNotNull();
-        verify(orderRepository).updateById(o);
+        verify(orderService).adminComplete(1L);
+        verify(orderRepository, never()).updateById(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("已支付订单不能直接取消：必须走退款，否则商品永久锁定")
+    void rejects_cancelling_paid_order() {
+        when(orderRepository.selectById(1L))
+                .thenReturn(order(1L, OrderStatus.PENDING_SHIPMENT.getCode()));
+
+        var resp = controller.updateOrderStatus(AUTH, 1L, Map.of("status", "4"));
+
+        assertThat(codeOf(resp)).isEqualTo(400);
+        assertThat(messageOf(resp)).contains("退款");
+        verify(orderService, never()).adminCancelUnpaid(anyLong());
+        verify(orderRepository, never()).updateById(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("待支付 → 已取消：走领域服务恢复商品")
+    void cancels_unpaid_order_via_service() {
+        Order o = order(1L, OrderStatus.PENDING_PAYMENT.getCode());
+        when(orderRepository.selectById(1L)).thenReturn(o);
+        when(orderService.adminCancelUnpaid(1L)).thenAnswer(inv -> {
+            o.setStatus(OrderStatus.CANCELLED.getCode());
+            return o;
+        });
+
+        var resp = controller.updateOrderStatus(AUTH, 1L, Map.of("status", "4"));
+
+        assertThat(codeOf(resp)).isEqualTo(200);
+        verify(orderService).adminCancelUnpaid(1L);
+        verify(orderRepository, never()).updateById(any(Order.class));
     }
 
     // ---------------- 订单删除 ----------------
@@ -225,6 +266,7 @@ class AdminControllerGuardTest {
     void admin_can_delete_cancelled_order() {
         when(orderRepository.selectById(1L)).thenReturn(order(1L, OrderStatus.CANCELLED.getCode()));
         when(orderRepository.deleteById(1L)).thenReturn(1);
+        when(orderService.canDelete(any())).thenReturn(true);
 
         assertThat(codeOf(controller.deleteOrder(AUTH, 1L))).isEqualTo(200);
         verify(orderRepository).deleteById(1L);

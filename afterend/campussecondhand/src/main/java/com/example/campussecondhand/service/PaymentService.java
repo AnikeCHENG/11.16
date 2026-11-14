@@ -25,6 +25,23 @@ public interface PaymentService {
     PayResult pay(Order order, String payMethod);
 
     /**
+     * 生成本次支付的<b>幂等键</b>。
+     *
+     * <p><b>为什么需要它</b>：订单状态推进与渠道扣款分属两个系统，没有分布式事务
+     * 只能靠「幂等键 + 补偿」。正确顺序是<b>先占位（条件更新订单状态）、再调渠道</b>：
+     * 占位失败说明订单已被并发改走，直接失败，根本不会调用渠道，因此不会重复扣款；
+     * 占位成功后才发起扣款，渠道按这个键去重，即使调用重试也只会扣一次。</p>
+     *
+     * <p>默认返回 {@code null} 表示渠道不要求幂等键，调用方会退回到本地生成的键。</p>
+     *
+     * @param order 待支付订单
+     * @return 幂等键；{@code null} 表示由调用方自行生成
+     */
+    default String generateIdempotencyKey(Order order) {
+        return null;
+    }
+
+    /**
      * 渠道标识，用于日志与排查。
      */
     String channelName();

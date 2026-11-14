@@ -57,7 +57,7 @@ public class AuthController {
                 if (!passwordEncoder.matches(password, user.getPassword())) {
                     return ResponseEntity.ok(ApiResponse.error(401, "用户名或密码错误"));
                 }
-                if (user.getStatus() == 0) {
+                if (user.getStatus() != null && user.getStatus() == 0) {
                     return ResponseEntity.ok(ApiResponse.error(403, "账户已被禁用"));
                 }
 
@@ -104,6 +104,11 @@ public class AuthController {
         if (email == null || email.isBlank()) {
             return ResponseEntity.ok(ApiResponse.error(400, "邮箱不能为空"));
         }
+        // trim 必须与 UserDTO.setEmail 保持同一口径：验证码在 Redis 里的 key 是
+        // "email:code:" + email，发送时用的邮箱与注册校验时用的邮箱只要差一个空格，
+        // verify 就会查不到 key，报「验证码不存在或已过期」。
+        // forgotPassword / resetPassword 早已 trim，这里此前漏了，补齐。
+        email = email.trim();
         try {
             emailService.sendCode(email);
             return ResponseEntity.ok(ApiResponse.success("验证码已发送", null));
@@ -116,13 +121,24 @@ public class AuthController {
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<?>> register(@Valid @RequestBody UserDTO userDTO) {
         try {
-            if (userDTO.getCode() == null || userDTO.getCode().isBlank()) {
-                return ResponseEntity.ok(ApiResponse.error(400, "验证码不能为空"));
-            }
-            try {
-                emailService.verify(userDTO.getEmail(), userDTO.getCode());
-            } catch (Exception e) {
-                return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+            // 邮箱验证码为「可选」，不再强制。
+            //
+            // 起因：原本这里直接拒绝空验证码，于是任何人都必须先收到一封邮件才能注册。
+            // 而 SMTP 依赖 MAIL_PASSWORD，本地/答辩环境往往没配这个值，
+            // 结果是验证码根本发不出去 -> 注册功能整体不可用。
+            //
+            // 现在的规则：
+            //   不填验证码 -> 跳过校验直接注册（等同 c9eb5bc 引入验证码之前的旧行为，
+            //                 任何格式合法的邮箱都能注册）；
+            //   填了验证码 -> 仍然严格校验，填错就报错。
+            // 这样既恢复了「所有邮箱都可以注册」，也保住了「愿意填验证码的人确实验过邮箱」。
+            String code = userDTO.getCode();
+            if (code != null && !code.isBlank()) {
+                try {
+                    emailService.verify(userDTO.getEmail(), code);
+                } catch (Exception e) {
+                    return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+                }
             }
 
             if (userService.existsByUsername(userDTO.getUsername())) {

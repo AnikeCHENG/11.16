@@ -390,6 +390,14 @@
   color: var(--text-2);
 }
 
+/* 选填标记：注册页的邮箱验证码已是可选，不填也能注册 */
+.auth-shell .field-opt {
+  font-style: normal;
+  font-size: 12px;
+  opacity: 0.62;
+  margin-left: 2px;
+}
+
 .auth-shell .input {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.16);

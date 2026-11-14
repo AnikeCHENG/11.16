@@ -25,6 +25,11 @@ async function request(path, options = {}) {
   } catch (e) {
     const err = new Error('Network request failed')
     err.cause = e
+    // 必须保留后端返回体：上面两条分支把业务失败（价格超限、信用分过低、
+    // 无权操作等）都做成了 Error 抛出来，若在这里丢掉 e.response，
+    // 调用方只剩 "Network request failed" 可显示，真实原因全部丢失。
+    // 与 plaza.js 的同名 request() 保持一致。
+    err.response = e.response
     throw err
   }
 }

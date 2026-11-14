@@ -135,7 +135,7 @@
             <ul class="order-list">
               <li v-for="o in orders" :key="o.id" class="order-item">
                 <div class="goods-thumb">
-                  <img v-if="o.product?.image && !brokenImages.has(o.id)" :src="o.product.image"
+                  <img v-if="o.product?.image && !brokenImages.has(o.id)" :src="firstImage(o.product.image, '')"
                        :alt="o.product.title" @error="markBroken(o.id)" />
                   <span v-else class="goods-thumb-fallback" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -242,7 +242,9 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getOrderDetail, batchPayOrders } from '../api/order'
+import { getProfile } from '../api/user'
 import { cartErrorMessage } from '../api/cart'
+import { firstImage } from '../utils/images'
 
 const route = useRoute()
 const router = useRouter()
@@ -260,16 +262,18 @@ const tradeNo = ref('')
 const paymentChannel = ref('')
 const remain = ref(0)
 const method = ref('alipay')
+/** 账户余额：仅用于「余额」支付方式展示与支付前校验 */
+const balance = ref(0)
 const brokenImages = ref(new Set())
 const payTotal = ref(0)
 
 let timer = null
 
-const methods = [
+const methods = computed(() => [
   { value: 'alipay', label: '支付宝', glyph: '支', color: '#1677ff' },
   { value: 'wechat', label: '微信支付', glyph: '微', color: '#07c160' },
-  { value: 'balance', label: '余额', glyph: '¥', color: '#0b6e54' }
-]
+  { value: 'balance', label: `余额（¥${money(balance.value)}）`, glyph: '¥', color: '#0b6e54' }
+])
 
 /** 从 query 解析 orderIds（逗号分隔）；非法项丢弃 */
 const orderIds = computed(() =>
@@ -370,6 +374,11 @@ const failedReasonText = computed(() =>
 
 async function onPay() {
   if (paying.value || remain.value <= 0) return
+  // 余额支付先做本地预检：后端逐笔扣款，余额不足的订单会进入 failed 列表
+  if (method.value === 'balance' && balance.value < totalAmount.value) {
+    ElMessage.warning(`余额不足（当前 ¥${money(balance.value)}），请选择其他支付方式`)
+    return
+  }
   paying.value = true
   try {
 const res = await batchPayOrders(orderIds.value, method.value)
@@ -395,7 +404,20 @@ const res = await batchPayOrders(orderIds.value, method.value)
   }
 }
 
-onMounted(loadOrders)
+/** 余额加载失败不阻断批量收银台：仅余额项显示 0.00 */
+async function loadBalance() {
+  try {
+    const res = await getProfile()
+    if (res.code === 200) balance.value = Number(res.data?.balance) || 0
+  } catch (e) {
+    console.error('加载余额失败:', e)
+  }
+}
+
+onMounted(() => {
+  loadOrders()
+  loadBalance()
+})
 onBeforeUnmount(() => clearInterval(timer))
 </script>
 

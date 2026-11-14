@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +47,7 @@ class OrderPaymentTest {
     private ProductRepository productRepository;
     private UserRepository userRepository;
     private ProductService productService;
+    private FundService fundService;
     private OrderService orderService;
 
     private final List<PaymentRecord> insertedRecords = new ArrayList<>();
@@ -57,9 +59,10 @@ class OrderPaymentTest {
         productRepository = mock(ProductRepository.class);
         userRepository = mock(UserRepository.class);
         productService = mock(ProductService.class);
+        fundService = mock(FundService.class);
         orderService = new OrderService(orderRepository, paymentRecordRepository, productRepository,
                 userRepository, productService, new OrderFeeService(),
-                mock(FundService.class),
+                fundService,
                 new MockPaymentServiceImpl(),
                 new ResourcelessTransactionTemplate(),
                 30);
@@ -268,6 +271,29 @@ class OrderPaymentTest {
 
         // 单条失败不得影响其余订单
         assertThat(orderService.cancelTimeoutOrdersBatch()).isEqualTo(1);
+    }
+
+    @Test
+    void balance_payment_goes_through_account_ledger() {
+        Order order = pendingOrder(LocalDateTime.now().plusMinutes(30));
+        when(orderRepository.selectById(1L)).thenReturn(order);
+
+        PayResult result = orderService.payOrder(1L, "余额", BUYER_ID);
+
+        assertThat(result.isSuccess()).isTrue();
+        // 实付 = 成交价 + 运费；服务费由卖家承担，不从买家余额多扣
+        verify(fundService).debitForPurchase(eq(order), eq(BUYER_ID),
+                eq(new BigDecimal("1500.00")));
+    }
+
+    @Test
+    void third_party_payment_does_not_touch_balance() {
+        Order order = pendingOrder(LocalDateTime.now().plusMinutes(30));
+        when(orderRepository.selectById(1L)).thenReturn(order);
+
+        orderService.payOrder(1L, "支付宝", BUYER_ID);
+
+        verify(fundService, never()).debitForPurchase(any(), any(), any());
     }
 
     @Test

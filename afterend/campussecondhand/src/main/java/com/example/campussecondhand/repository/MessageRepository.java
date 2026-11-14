@@ -43,4 +43,29 @@ public interface MessageRepository extends BaseMapper<Message> {
 
     @Update("UPDATE messages SET is_read = 1 WHERE sender_id = #{otherUserId} AND receiver_id = #{userId} AND is_read = 0")
     int markConversationRead(@Param("otherUserId") Long otherUserId, @Param("userId") Long userId);
+
+    /**
+     * 把单条消息标记为已读。
+     *
+     * <p>条件必须同时带 {@code receiver_id}：此前 Service 只按 id 更新，
+     * 于是任何登录用户都能把别人的消息标成已读（IDOR）——收件人再也不会
+     * 看到未读提醒。SQL 层收口比在 Java 里「先查再判」更稳妥，也少一次查询。</p>
+     *
+     * @return 受影响行数；0 表示消息不存在或不属于该用户
+     */
+    @Update("UPDATE messages SET is_read = 1 WHERE id = #{id} AND receiver_id = #{userId}")
+    int markAsRead(@Param("id") Long id, @Param("userId") Long userId);
+
+    /**
+     * 把某个用户收到的全部未读消息一次性标记为已读。
+     *
+     * <p>单条 UPDATE 完成，不走「先查列表再逐条 updateById」：
+     * 逐条更新会把每条消息的所有字段写回去（N 次全字段 UPDATE），
+     * 消息多时既慢又容易把并发改动覆盖掉。</p>
+     *
+     * @param userId 收件人 id
+     * @return 被标记为已读的消息条数
+     */
+    @Update("UPDATE messages SET is_read = 1 WHERE receiver_id = #{userId} AND is_read = 0")
+    int markAllAsRead(@Param("userId") Long userId);
 }

@@ -41,14 +41,14 @@
         </div>
 
         <div class="field">
-          <label class="field-label" for="reg-code">邮箱验证码</label>
+          <label class="field-label" for="reg-code">邮箱验证码<em class="field-opt">（选填）</em></label>
           <div class="field-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M4 4h16v16H4z" />
               <path d="M8 9h8M8 13h5" />
             </svg>
           </div>
-          <input id="reg-code" v-model="form.code" class="input" type="text" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+          <input id="reg-code" v-model="form.code" class="input" type="text" inputmode="numeric" maxlength="6" placeholder="不填可直接注册" />
         </div>
 
         <div class="field">
@@ -145,6 +145,18 @@ let countdownTimer = null
 
 const form = reactive({ username: '', email: '', password: '', confirm: '', code: '' })
 
+// 邮箱只做最基础的格式校验：必须含 @，且 @ 之后还要有一个点。
+// 不做域名/后缀白名单——任何格式合法的邮箱都能注册。
+// 这条正则是本文件唯一的邮箱格式定义，表单项与「获取验证码」共用。
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function validateEmailFormat(rule, value, callback) {
+  // 空值交给 required 规则报错，这里不重复拦截
+  if (!value) return callback()
+  if (!emailRegex.test(value)) return callback(new Error('请输入正确的邮箱格式'))
+  callback()
+}
+
 const rules = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
@@ -152,14 +164,16 @@ const rules = {
   ],
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' }
+    { validator: validateEmailFormat, trigger: 'blur' }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
     { min: 6, max: 20, message: '密码长度6-20字符', trigger: 'blur' }
   ],
   confirm: [{ required: true, message: '请确认密码', trigger: 'blur' }],
-  code: [{ required: true, message: '请输入验证码', trigger: 'blur' }],
+  // 验证码为可选：不填直接注册（任何邮箱都可以），
+  // 填了就必须填对，后端会严格校验。
+  code: [],
 }
 
 const strengthScore = computed(() => {
@@ -192,8 +206,6 @@ const strengthText = computed(() => {
     default: return ''
   }
 })
-
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 function startCountdown(seconds = 60) {
   countdown.value = seconds
@@ -235,10 +247,6 @@ function onRegister() {
     if (valid) {
       if (form.password !== form.confirm) {
         ElMessage.error('两次输入的密码不一致')
-        return
-      }
-      if (!form.code) {
-        ElMessage.error('请输入邮箱验证码')
         return
       }
       loading.value = true

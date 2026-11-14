@@ -127,6 +127,23 @@
             </div>
           </section>
 
+          <section v-if="reviews.length" class="card block">
+            <h3 class="block-title">
+              买家评价
+              <span class="review-count">最近 {{ reviews.length }} 条</span>
+            </h3>
+            <ul class="review-list">
+              <li v-for="rv in reviews" :key="rv.id" class="review-item">
+                <div class="review-head">
+                  <span class="review-user">{{ rv.reviewerName || '匿名买家' }}</span>
+                  <StarRating :model-value="rv.rating" :readonly="true" :size="13" />
+                  <span class="review-time">{{ rv.createTime }}</span>
+                </div>
+                <p class="review-content">{{ rv.content }}</p>
+              </li>
+            </ul>
+          </section>
+
           <div class="actions">
             <button class="btn btn-outline fav-btn" :class="{ 'is-favorited': isFavorited }"
                     type="button" :disabled="favBusy" @click="toggleFavorite">
@@ -172,6 +189,12 @@
               {{ buying ? '处理中…' : '立即购买' }}
             </button>
           </div>
+
+          <div v-if="!isOwnProduct" class="report-row">
+            <button class="report-link" type="button" :disabled="reporting" @click="reportProduct">
+              {{ reporting ? '提交中…' : '举报该商品' }}
+            </button>
+          </div>
         </div>
       </div>
     </main>
@@ -185,9 +208,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { getProductDetail } from '../api/product'
-import { getReviewStats } from '../api/review'
+import { getReviewStats, getSellerReviews } from '../api/review'
+import { submitReport } from '../api/report'
 import VerifiedBadge from '../components/VerifiedBadge.vue'
 import StarRating from '../components/StarRating.vue'
 import { getUserById } from '../api/user'
@@ -196,6 +220,8 @@ import { addToCart, getCartCount, getCartList, checkoutCart, cartErrorMessage } 
 import CartActionToast from '../components/CartActionToast.vue'
 import FlyToCart from '../components/FlyToCart.vue'
 import { checkFavorite, addFavorite, removeFavoriteById } from '../api/favorites'
+import { getSessionUserId } from '../utils/session'
+import { parseImages } from '../utils/images'
 
 const router = useRouter()
 const route = useRoute()
@@ -204,6 +230,9 @@ const seller = ref({})
 /** 卖家评价统计；默认值对应"暂无评价"，避免首屏渲染时闪出 0% */
 const EMPTY_STATS = { total: 0, good: 0, averageRating: 0, goodRate: 0, hasReview: false }
 const reviewStats = ref(EMPTY_STATS)
+/** 卖家最近收到的文字评价，随卖家信息一起加载 */
+const reviews = ref([])
+const reporting = ref(false)
 const loading = ref(true)
 const error = ref('')
 const currentImage = ref('')
@@ -225,7 +254,10 @@ const toast = ref(null)
 
 const productImages = computed(() => {
   if (!product.value?.images) return ['/sample/phone.svg']
-  const images = product.value.images.split(',')
+  // images 是逗号分隔的多图串，其中每张都可能是 Base64 Data URL——
+  // 载荷内部也含逗号，裸 split(',') 会把 URL 截断成 "data:image/...;base64"，
+  // 图片彻底失效。用能识别 base64 的解析器。
+  const images = parseImages(product.value.images)
   return images.length > 0 ? images : ['/sample/phone.svg']
 })
 
@@ -319,13 +351,15 @@ async function fetchCartState() {
 
 async function fetchSellerInfo(userId) {
   try {
-    const [info, stats] = await Promise.all([
+    const [info, stats, list] = await Promise.all([
       getUserById(userId),
-      // 好评率拉取失败不应让整个卖家卡片消失，故各自兜底而非一起 await 抛出
-      getReviewStats(userId).catch(() => null)
+      // 好评率/评价列表拉取失败不应让整个卖家卡片消失，故各自兜底
+      getReviewStats(userId).catch(() => null),
+      getSellerReviews(userId, 5).catch(() => null)
     ])
     if (info.code === 200 && info.data) seller.value = info.data
     reviewStats.value = stats?.code === 200 && stats.data ? stats.data : EMPTY_STATS
+    reviews.value = list?.code === 200 && Array.isArray(list.data) ? list.data : []
   } catch (e) {
     console.error('Failed to fetch seller info:', e)
   }
@@ -342,22 +376,12 @@ const isOwnProduct = computed(() => {
 
 /**
  * 取当前登录用户 ID。
+ *
  * 兼容两种存储：独立的 userId 键，或 user JSON 里的 id 字段。
+ * 取值与持有 token 的存储同源，避免登出后残留的另一份凭证被误用。
  */
 function resolveUserId() {
-  for (const store of [localStorage, sessionStorage]) {
-    const direct = parseInt(store.getItem('userId') || '', 10)
-    if (Number.isFinite(direct) && direct > 0) return direct
-  }
-  for (const store of [localStorage, sessionStorage]) {
-    try {
-      const raw = store.getItem('user')
-      if (!raw) continue
-      const id = parseInt(JSON.parse(raw)?.id, 10)
-      if (Number.isFinite(id) && id > 0) return id
-    } catch { /* 忽略 */ }
-  }
-  return 0
+  return getSessionUserId()
 }
 
 function contactSeller() {
@@ -374,6 +398,50 @@ function contactSeller() {
       seller: seller.value.username
     }
   })
+}
+
+/**
+ * 举报商品：入口此前只存在于管理端，C 端没有任何地方能提交举报。
+ * 原因必填，提交后由 ReportService 做频率限制与防重复。
+ */
+async function reportProduct() {
+  const token = localStorage.getItem('token') || sessionStorage.getItem('token')
+  if (!token) {
+    ElMessage.warning('请先登录后再举报')
+    router.push({ path: '/login', query: { redirect: `/products/${product.value.id}` } })
+    return
+  }
+  let reason
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '请填写举报原因（如：虚假信息、违禁物品、疑似诈骗）',
+      '举报商品',
+      {
+        confirmButtonText: '提交举报',
+        cancelButtonText: '取消',
+        inputType: 'textarea',
+        inputPlaceholder: '请尽量描述具体问题，便于平台核实',
+        inputValidator: (v) => (v && v.trim() ? true : '举报原因不能为空')
+      }
+    )
+    reason = value.trim()
+  } catch {
+    return
+  }
+
+  reporting.value = true
+  try {
+    const res = await submitReport(product.value.id, 'PRODUCT', reason)
+    if (res.code === 200) {
+      ElMessage.success(res.message || '举报已提交，等待处理')
+    } else {
+      ElMessage.error(res.message || '举报失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.message || '举报失败，请稍后重试')
+  } finally {
+    reporting.value = false
+  }
 }
 
 /**
@@ -615,6 +683,29 @@ onMounted(fetchProduct)
 .seller-rating__text { font-size: var(--text-sm); color: var(--text-2); }
 .seller-rating__text strong { color: var(--accent); font-weight: var(--weight-semibold); }
 .seller-rating__muted { font-size: var(--text-xs); color: var(--text-3); }
+
+.review-count { margin-left: var(--space-2); font-size: var(--text-xs); font-weight: var(--weight-normal); color: var(--text-3); }
+.review-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.review-item { padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.review-item:first-child { padding-top: 0; border-top: none; }
+.review-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.review-user { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text); }
+.review-time { margin-left: auto; font-size: var(--text-xs); color: var(--text-3); }
+.review-content { margin-top: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-relaxed); color: var(--text-2); white-space: pre-wrap; }
+
+.report-row { display: flex; justify-content: flex-end; }
+.report-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.report-link:hover:not(:disabled) { color: var(--danger); }
+.report-link:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .actions .btn { height: 46px; }

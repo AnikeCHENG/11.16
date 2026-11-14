@@ -1,6 +1,8 @@
 package com.example.campussecondhand.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.campussecondhand.common.ApiResponse;
+import com.example.campussecondhand.common.PageResult;
 import com.example.campussecondhand.entity.Order;
 import com.example.campussecondhand.entity.Review;
 import com.example.campussecondhand.entity.User;
@@ -10,6 +12,7 @@ import com.example.campussecondhand.repository.ProductRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.OrderFeeService;
 import com.example.campussecondhand.service.OrderService;
+import com.example.campussecondhand.service.PaymentService.PayResult;
 import com.example.campussecondhand.service.ReviewService;
 import com.example.campussecondhand.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +31,8 @@ import org.springframework.web.bind.annotation.RequestMethod;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -209,12 +214,13 @@ class OrderControllerContractTest {
     }
 
     @Test
-    @DisplayName("删除订单：进行中的订单（待支付/待发货/待收货）一律 400，不删")
+    @DisplayName("删除订单：进行中的订单（待支付/待发货/待收货/退款中）一律 400，不删")
     void delete_rejects_in_progress_orders() {
         tokenResolvesTo(BUYER_ID);
 
         for (OrderStatus status : new OrderStatus[]{OrderStatus.PENDING_PAYMENT,
-                OrderStatus.PENDING_SHIPMENT, OrderStatus.PENDING_RECEIPT}) {
+                OrderStatus.PENDING_SHIPMENT, OrderStatus.PENDING_RECEIPT,
+                OrderStatus.REFUNDING}) {
             when(orderRepository.selectById(ORDER_ID)).thenReturn(orderWithStatus(status.getCode()));
             assertThat(codeOf(controller.deleteOrder(AUTH, ORDER_ID)))
                     .as("状态 %s 的订单不得被硬删除", status.getLabel())
@@ -230,6 +236,7 @@ class OrderControllerContractTest {
         when(orderRepository.selectById(ORDER_ID))
                 .thenReturn(orderWithStatus(OrderStatus.CANCELLED.getCode()));
         when(orderRepository.deleteById(ORDER_ID)).thenReturn(1);
+        when(orderService.canDelete(any())).thenReturn(true);
 
         assertThat(codeOf(controller.deleteOrder(AUTH, ORDER_ID))).isEqualTo(200);
         verify(orderRepository).deleteById(ORDER_ID);
@@ -242,8 +249,76 @@ class OrderControllerContractTest {
         when(orderRepository.selectById(ORDER_ID))
                 .thenReturn(orderWithStatus(OrderStatus.COMPLETED.getCode()));
         when(orderRepository.deleteById(ORDER_ID)).thenReturn(1);
+        when(orderService.canDelete(any())).thenReturn(true);
 
         assertThat(codeOf(controller.deleteOrder(AUTH, ORDER_ID))).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("删除订单：已退款的订单可删（交易已终结，但流水仍由资金记录保留）")
+    void delete_allows_refunded_order() {
+        tokenResolvesTo(BUYER_ID);
+        when(orderRepository.selectById(ORDER_ID))
+                .thenReturn(orderWithStatus(OrderStatus.REFUNDED.getCode()));
+        when(orderRepository.deleteById(ORDER_ID)).thenReturn(1);
+        when(orderService.canDelete(any())).thenReturn(true);
+
+        assertThat(codeOf(controller.deleteOrder(AUTH, ORDER_ID))).isEqualTo(200);
+        verify(orderRepository).deleteById(ORDER_ID);
+    }
+
+    @Test
+    @DisplayName("删除订单：已有资金流水的订单拒绝删除（避免孤儿流水）")
+    void delete_rejects_order_with_fund_flow() {
+        tokenResolvesTo(SELLER_ID);
+        when(orderRepository.selectById(ORDER_ID))
+                .thenReturn(orderWithStatus(OrderStatus.COMPLETED.getCode()));
+        when(orderService.canDelete(any())).thenReturn(false);
+
+        assertThat(codeOf(controller.deleteOrder(AUTH, ORDER_ID))).isEqualTo(400);
+        assertThat(controller.deleteOrder(AUTH, ORDER_ID).getBody().getMessage())
+                .contains("资金流水");
+        verify(orderRepository, never()).deleteById(anyLong());
+    }
+
+    @Test
+    @DisplayName("退款申请：无 token 401，且不进入业务逻辑")
+    void refund_apply_requires_login() {
+        assertThat(codeOf(controller.applyRefund(null, ORDER_ID,
+                java.util.Map.of("reason", "不想要了")))).isEqualTo(401);
+        verify(orderService, never()).applyRefund(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("退款申请：服务层拒绝时映射为 400")
+    void refund_apply_maps_business_error() {
+        tokenResolvesTo(BUYER_ID);
+        when(orderService.applyRefund(anyLong(), anyLong(), anyString()))
+                .thenThrow(new OrderService.OrderBusinessException("当前订单状态（已完成）不允许申请退款"));
+
+        var resp = controller.applyRefund(AUTH, ORDER_ID,
+                java.util.Map.of("reason", "后悔了"));
+
+        assertThat(codeOf(resp)).isEqualTo(400);
+        assertThat(resp.getBody().getMessage()).contains("不允许申请退款");
+    }
+
+    @Test
+    @DisplayName("卖家同意退款：成功返回 200 与退款后的订单")
+    void refund_approve_success() {
+        tokenResolvesTo(SELLER_ID);
+        Order refunded = orderWithStatus(OrderStatus.REFUNDED.getCode());
+        when(orderService.approveRefund(anyLong(), anyLong(), any()))
+                .thenReturn(refunded);
+        when(orderService.buildCashierView(refunded))
+                .thenReturn(java.util.Map.of("id", ORDER_ID, "status", 6));
+
+        var resp = controller.approveRefund(AUTH, ORDER_ID,
+                java.util.Map.of("reply", "同意"));
+
+        assertThat(codeOf(resp)).isEqualTo(200);
+        assertThat(resp.getBody().getMessage()).contains("已同意退款");
+        verify(orderService).approveRefund(ORDER_ID, SELLER_ID, "同意");
     }
 
     @Test
@@ -293,5 +368,103 @@ class OrderControllerContractTest {
         assertThat(codeOf(resp)).isEqualTo(200);
         assertThat((java.util.Map<String, Object>) resp.getBody().getData())
                 .containsEntry("content", "很好");
+    }
+
+    @Test
+    @DisplayName("订单列表返回服务端判定的 isBuyer/isSeller：买家不会被标成卖家")
+    @SuppressWarnings("unchecked")
+    void my_orders_marks_roles_from_viewer_identity() {
+        tokenResolvesTo(BUYER_ID);
+        Page<Order> page = new Page<>(1, 10);
+        page.setRecords(List.of(orderWithStatus(OrderStatus.PENDING_SHIPMENT.getCode())));
+        page.setTotal(1);
+        when(orderRepository.selectPage(any(), any())).thenReturn(page);
+        when(productRepository.selectBatchIds(any())).thenReturn(List.of());
+        when(userRepository.selectBatchIds(any())).thenReturn(List.of());
+
+        var resp = controller.getMyOrders(AUTH, 1, 10);
+
+        assertThat(codeOf(resp)).isEqualTo(200);
+        PageResult<Map<String, Object>> data =
+                (PageResult<Map<String, Object>>) resp.getBody().getData();
+        assertThat(data.list()).hasSize(1);
+        assertThat(data.list().get(0))
+                .containsEntry("isBuyer", true)
+                .containsEntry("isSeller", false);
+    }
+
+    /**
+     * 批量支付的支付方式参数名回归（P0）。
+     *
+     * <p>前端 {@code api/order.js} 发的是 {@code pay_method}，后端一度只读
+     * {@code payMethod}，于是选「余额」时静默回退成 alipay：订单变成待发货，
+     * 余额却一分未扣。这里同时锁住两种写法，避免任一侧改名再次造成免费订单。</p>
+     */
+    @Test
+    @DisplayName("批量支付：pay_method（前端实际写法）必须被识别，不能回退成 alipay")
+    void batch_pay_accepts_snake_case_pay_method() {
+        tokenResolvesTo(BUYER_ID);
+        when(orderService.payOrder(ORDER_ID, "balance", BUYER_ID))
+                .thenReturn(PayResult.ok("MOCK-BATCH-1"));
+        when(orderRepository.selectById(ORDER_ID))
+                .thenReturn(orderWithStatus(OrderStatus.PENDING_SHIPMENT.getCode()));
+
+        var resp = controller.batchPay(AUTH, Map.of(
+                "orderIds", List.of(ORDER_ID),
+                "pay_method", "balance"));
+
+        assertThat(codeOf(resp)).isEqualTo(200);
+        verify(orderService).payOrder(ORDER_ID, "balance", BUYER_ID);
+    }
+
+    @Test
+    @DisplayName("批量支付：payMethod（后端历史契约）继续可用")
+    void batch_pay_accepts_camel_case_pay_method() {
+        tokenResolvesTo(BUYER_ID);
+        when(orderService.payOrder(ORDER_ID, "余额", BUYER_ID))
+                .thenReturn(PayResult.ok("MOCK-BATCH-2"));
+        when(orderRepository.selectById(ORDER_ID))
+                .thenReturn(orderWithStatus(OrderStatus.PENDING_SHIPMENT.getCode()));
+
+        var resp = controller.batchPay(AUTH, Map.of(
+                "orderIds", List.of(ORDER_ID),
+                "payMethod", "余额"));
+
+        assertThat(codeOf(resp)).isEqualTo(200);
+        verify(orderService).payOrder(ORDER_ID, "余额", BUYER_ID);
+    }
+
+    /**
+     * 缺省支付方式不能静默回退（P0 回归防线）。
+     *
+     * <p>回退到 {@code alipay} 会走到「不扣余额、不记 OUT 流水」的通道，
+     * 但订单照常推进为待发货、卖家照常入账——参数名拼错一次就等于白拿货。
+     * 这里要求缺省直接 400，且一笔都不进入支付。</p>
+     */
+    @Test
+    @DisplayName("批量支付：缺省支付方式返回 400，且不发起任何支付")
+    void batch_pay_rejects_missing_pay_method() {
+        tokenResolvesTo(BUYER_ID);
+
+        var resp = controller.batchPay(AUTH, Map.of(
+                "orderIds", List.of(ORDER_ID)));
+
+        assertThat(codeOf(resp)).isEqualTo(400);
+        assertThat(resp.getBody().getMessage()).contains("支付方式");
+        // 一笔都不能走到 payOrder，否则就是「不扣款的订单被推进为已支付」
+        verify(orderService, never()).payOrder(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("批量支付：支付方式为空串同样返回 400")
+    void batch_pay_rejects_blank_pay_method() {
+        tokenResolvesTo(BUYER_ID);
+
+        var resp = controller.batchPay(AUTH, Map.of(
+                "orderIds", List.of(ORDER_ID),
+                "payMethod", "   "));
+
+        assertThat(codeOf(resp)).isEqualTo(400);
+        verify(orderService, never()).payOrder(anyLong(), any(), any());
     }
 }

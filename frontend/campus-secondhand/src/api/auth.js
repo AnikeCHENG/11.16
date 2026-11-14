@@ -1,5 +1,7 @@
 const BASE = import.meta.env.VITE_API_BASE || '/api'
 
+import { clearSession } from '../utils/session'
+
 async function request(path, options = {}) {
   try {
     const res = await fetch(`${BASE}${path}`, {
@@ -68,9 +70,12 @@ export async function resetPassword({ email, code, newPassword }) {
 
 // 后端使用无状态 JWT，无退出接口；前端清除本地凭证即可视为退出
 export async function logout() {
-  localStorage.removeItem('token')
-  localStorage.removeItem('username')
-  sessionStorage.removeItem('justLoggedIn')
+  // 必须同时清 localStorage 与 sessionStorage：
+  // 登录页未勾「记住我」时 token 写在 sessionStorage，
+  // 只清 localStorage 会导致「登出后仍是登录态」。
+  // 身份键（token/user/userId/username/头像等）一并清理，
+  // 否则下一位登录者会串用上一位残留的 userId。
+  clearSession()
   return { code: 200, message: '已退出登录' }
 }
 

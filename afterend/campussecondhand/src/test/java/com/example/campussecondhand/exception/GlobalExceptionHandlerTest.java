@@ -46,4 +46,21 @@ class GlobalExceptionHandlerTest {
         assertThat(resp.getBody().getCode()).isEqualTo(413);
         assertThat(resp.getBody().getMessage()).contains("大小上限");
     }
+
+    /**
+     * 403 刻意走 HTTP 200：本项目所有业务型 403（13 处 Controller）都写作
+     * {@code ResponseEntity.ok(ApiResponse.error(403, ...))}，前端也一律
+     * 先解析 JSON 再判断 {@code body.code}。这里改成真实 HTTP 403
+     * 反而与约定不一致，且会让「HTTP 200 即请求已送达」的调用方多出分支。
+     */
+    @Test
+    @DisplayName("业务禁止 -> HTTP 200 + body.code=403，且原样带出原因")
+    void forbidden_maps_to_body_code_403() {
+        var resp = handler.handleForbidden(new ForbiddenException("你的信用分过低，暂时无法发布商品"));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getCode()).isEqualTo(403);
+        assertThat(resp.getBody().getMessage()).contains("信用分过低");
+    }
 }

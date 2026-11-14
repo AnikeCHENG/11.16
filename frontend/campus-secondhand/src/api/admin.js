@@ -21,8 +21,17 @@ import { ElMessage } from 'element-plus'
  * 本实例只服务管理端。</p>
  */
 const admin = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || '/api',
-  timeout: 15000
+  // 必须带 /admin 后缀。此前这里写的是 VITE_API_BASE || '/api'，
+  // 而 20 处调用传的是 '/users'、'/stats' 这类子路径——请求全打到
+  // C 端的 /api/users…，管理员满屏 404（"进不了管理后台"的根因之一）。
+  baseURL: `${import.meta.env.VITE_API_BASE || '/api'}/admin`,
+  timeout: 15000,
+  // 实例级默认 JSON。AdminUsers / AdminProducts 的状态切换传的是裸数字
+  // （admin.put(url, 1)），axios 对非对象载荷不会自动补 application/json，
+  // dispatchRequest 反而把它兜成 x-www-form-urlencoded，后端
+  // @RequestBody Integer 无法解析。定死 JSON 后数字被序列化成 "1"，
+  // 对象载荷的行为不变（本来是 application/json）。
+  headers: { 'Content-Type': 'application/json' }
 })
 
 admin.interceptors.request.use((config) => {

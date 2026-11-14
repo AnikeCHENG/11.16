@@ -16,6 +16,8 @@
         <option :value="2">待收货</option>
         <option :value="3">已完成</option>
         <option :value="4">已取消</option>
+        <option :value="5">退款中</option>
+        <option :value="6">已退款</option>
       </select>
       <button @click="fetchOrders" class="search-btn">搜索</button>
     </div>
@@ -24,7 +26,7 @@
       <div class="order-item" v-for="order in orders" :key="order.id">
         <div class="order-header">
           <h3>订单 #{{ order.id }}</h3>
-          <span class="order-status" :class="order.status">{{ orderStatusMap[order.status] }}</span>
+          <span class="order-status" :class="'status-' + order.status">{{ orderStatusMap[order.status] }}</span>
         </div>
         <div class="order-info">
           <!--
@@ -39,6 +41,11 @@
           <p><strong>订单号:</strong> {{ order.orderNo }}</p>
           <p><strong>价格:</strong> ¥{{ order.price ?? 0 }}</p>
           <p><strong>创建时间:</strong> {{ formatDate(order.createdTime) }}</p>
+          <p v-if="order.refundReason"><strong>退款原因:</strong> {{ order.refundReason }}</p>
+          <p v-if="order.refundReply"><strong>处理说明:</strong> {{ order.refundReply }}</p>
+          <p v-if="order.refundAmount"><strong>退款金额:</strong> ¥{{ order.refundAmount }}</p>
+          <p v-if="order.refundApplyTime"><strong>申请时间:</strong> {{ formatDate(order.refundApplyTime) }}</p>
+          <p v-if="order.refundTime"><strong>退款时间:</strong> {{ formatDate(order.refundTime) }}</p>
         </div>
         <div class="order-actions">
           <!--
@@ -53,15 +60,42 @@
           >
             标记为已完成
           </button>
+          <!--
+            取消只能用于待支付(0)：后端 adminCancelUnpaid 只接受未支付订单，
+            已支付(1/2)必须走退款接口。此前按钮对 1/2 也显示，点击必然 400，
+            看起来像"功能坏了"，实际是入口给错了。
+          -->
           <button 
-            v-if="order.status === 0 || order.status === 1 || order.status === 2" 
+            v-if="order.status === 0"
             @click="updateOrderStatus(order.id, 4)"
             class="btn-secondary"
           >
             取消订单
           </button>
+          <!-- 退款：1/2 为管理员强制退款，5 为同意买家申请 -->
           <button
-            v-if="order.status === 3 || order.status === 4"
+            v-if="order.status === 1 || order.status === 2"
+            @click="refundOrder(order)"
+            class="btn-danger"
+          >
+            强制退款
+          </button>
+          <button
+            v-if="order.status === 5"
+            @click="refundOrder(order)"
+            class="btn-primary"
+          >
+            同意退款
+          </button>
+          <button
+            v-if="order.status === 5"
+            @click="rejectRefundOrder(order)"
+            class="btn-secondary"
+          >
+            驳回退款
+          </button>
+          <button
+            v-if="order.status === 3 || order.status === 4 || order.status === 6"
             @click="deleteOrder(order.id)"
             class="btn-danger"
           >
@@ -124,14 +158,16 @@ const page = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 
-// 后端 orders.status 为整数 0-4，此前误用字符串键导致状态标签空白、
+// 后端 orders.status 为整数 0-6，此前误用字符串键导致状态标签空白、
 // 操作按钮永不显示、状态更新必然 400（Integer.parseInt('COMPLETED') 抛异常）
 const orderStatusMap = {
   0: '待支付',
   1: '待发货',
   2: '待收货',
   3: '已完成',
-  4: '已取消'
+  4: '已取消',
+  5: '退款中',
+  6: '已退款'
 }
 
 const totalPages = computed(() => {
@@ -181,6 +217,57 @@ const deleteOrder = async (orderId) => {
     } catch (error) {
       console.error('删除订单失败:', error)
     }
+  }
+}
+
+/**
+ * 管理员退款。
+ *
+ * 状态 1/2 是强制退款（原因必填）；状态 5 是同意买家已提交的申请
+ * （原因沿用申请里的，管理员只补充处理说明）。两者都走同一端点，
+ * 后端按当前状态分流，前端不自行拼状态值。
+ */
+const refundOrder = async (order) => {
+  const isApplication = order.status === 5
+  let reason = order.refundReason || ''
+  if (!isApplication) {
+    const input = prompt('请输入退款原因（必填）')
+    if (input === null) return
+    reason = input.trim()
+    if (!reason) {
+      alert('退款原因不能为空')
+      return
+    }
+  }
+  const replyInput = prompt('给买家的处理说明（选填）')
+  if (replyInput === null) return
+  if (!confirm(`确定为订单 #${order.id} 退款吗？`)) return
+  try {
+    await admin.post(`/orders/${order.id}/refund`, {
+      reason,
+      reply: replyInput.trim()
+    })
+    fetchOrders()
+  } catch (error) {
+    console.error('退款失败:', error)
+  }
+}
+
+/** 管理员驳回退款申请：5 → 申请前状态 */
+const rejectRefundOrder = async (order) => {
+  const input = prompt('请输入驳回原因（必填）')
+  if (input === null) return
+  const reply = input.trim()
+  if (!reply) {
+    alert('驳回原因不能为空')
+    return
+  }
+  if (!confirm(`确定驳回订单 #${order.id} 的退款申请吗？`)) return
+  try {
+    await admin.post(`/orders/${order.id}/refund/reject`, { reply })
+    fetchOrders()
+  } catch (error) {
+    console.error('驳回退款失败:', error)
   }
 }
 
@@ -420,6 +507,9 @@ onMounted(() => {
 .order-status.PENDING { background: var(--warning-soft); color: var(--warning); }
 .order-status.COMPLETED { background: var(--success-soft); color: var(--success); }
 .order-status.CANCELLED { background: var(--danger-soft); color: var(--danger); }
+.order-status.status-0, .order-status.status-1, .order-status.status-2, .order-status.status-5 { background: var(--warning-soft); color: var(--warning); }
+.order-status.status-3 { background: var(--success-soft); color: var(--success); }
+.order-status.status-4, .order-status.status-6 { background: var(--danger-soft); color: var(--danger); }
 .order-info p { margin: 4px 0; color: var(--text-2); font-size: var(--text-sm); }
 .order-actions { display: flex; gap: var(--space-2); }
 .btn-primary { padding: 7px 16px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: var(--weight-medium); }

@@ -33,7 +33,7 @@ public interface DashboardRepository {
         LEFT JOIN products p ON p.user_id = u.id
         GROUP BY u.id, u.username, u.avatar, u.updated_time
         ORDER BY lastActiveTime DESC
-        LIMIT 5
+        LIMIT #{limit}
         """)
-    List<Map<String, Object>> activeUsers();
+    List<Map<String, Object>> activeUsers(@Param("limit") int limit);
 }

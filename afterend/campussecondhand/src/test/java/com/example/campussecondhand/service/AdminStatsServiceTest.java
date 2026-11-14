@@ -60,8 +60,8 @@ class AdminStatsServiceTest {
     }
 
     @Test
-    @DisplayName("手续费查询条件只包含待发货/待收货/已完成，排除待支付与已取消")
-    void financeQueryExcludesUnpaidAndCancelled() {
+    @DisplayName("手续费查询条件包含已支付未退款状态，排除待支付/已取消/已退款")
+    void financeQueryExcludesUnpaidCancelledAndRefunded() {
         when(orderRepository.selectList(any())).thenReturn(List.of());
 
         service.finance();
@@ -69,14 +69,18 @@ class AdminStatsServiceTest {
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper> captor =
                 ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
         verify(orderRepository).selectList(captor.capture());
-        String sql = captor.getValue().getCustomSqlSegment();
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<?> wrapper =
+                (com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<?>) captor.getValue();
+        String sql = wrapper.getCustomSqlSegment();
         assertThat(sql).contains("status");
-        // 待支付(0) 与 已取消(4) 不应出现在 IN 列表里
-        assertThat(sql).doesNotContain("0,");
-        assertThat(sql).contains(
-                String.valueOf(OrderStatus.PENDING_SHIPMENT.getCode()));
-        assertThat(sql).contains(String.valueOf(OrderStatus.PENDING_RECEIPT.getCode()));
-        assertThat(sql).contains(String.valueOf(OrderStatus.COMPLETED.getCode()));
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains(OrderStatus.PENDING_SHIPMENT.getCode(),
+                        OrderStatus.PENDING_RECEIPT.getCode(),
+                        OrderStatus.COMPLETED.getCode(),
+                        OrderStatus.REFUNDING.getCode())
+                .doesNotContain(OrderStatus.PENDING_PAYMENT.getCode(),
+                        OrderStatus.CANCELLED.getCode(),
+                        OrderStatus.REFUNDED.getCode());
     }
 
     @Test

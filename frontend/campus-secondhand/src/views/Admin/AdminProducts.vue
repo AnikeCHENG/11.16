@@ -13,9 +13,9 @@
           type="text" 
           placeholder="搜索商品标题或描述" 
           class="search-input"
-          @keyup.enter="fetchProducts"
+          @keyup.enter="handleSearch"
         />
-        <select v-model="categoryFilter" class="filter-select" @change="fetchProducts">
+        <select v-model="categoryFilter" class="filter-select" @change="handleFilterChange">
           <!--
             value 必须与库里存的一致：ProductService.autoCategorize 与 PostProduct.vue
             写入的是 books / electronics 这类英文键，中文只是展示名。
@@ -30,14 +30,14 @@
           <option value="living">生活用品</option>
           <option value="other">其他</option>
         </select>
-        <select v-model="statusFilter" class="filter-select" @change="fetchProducts">
+        <select v-model="statusFilter" class="filter-select" @change="handleFilterChange">
           <!-- 语义以 ProductStatus 枚举为准：0=已下架 1=在售 2=已售出 -->
           <option value="">所有状态</option>
           <option :value="1">在售</option>
           <option :value="2">已售出</option>
           <option :value="0">已下架</option>
         </select>
-        <button class="search-button" @click="fetchProducts">搜索</button>
+        <button class="search-button" @click="handleSearch">搜索</button>
       </div>
     </div>
     
@@ -65,6 +65,9 @@
           </tr>
         </thead>
         <tbody>
+          <tr v-if="products.length === 0">
+            <td colspan="8" class="empty-cell">没有找到匹配的商品</td>
+          </tr>
           <tr v-for="product in products" :key="product.id">
             <td>{{ product.id }}</td>
             <td class="product-title">{{ product.title }}</td>
@@ -230,15 +233,15 @@ const fetchProducts = async () => {
   try {
     loading.value = true
     error.value = ''
-    const response = await admin.get('/products', {
-      params: {
-        search: searchQuery.value,
-        category: categoryFilter.value,
-        status: statusFilter.value,
-        page: page.value,
-        size: pageSize.value
-      }
-    })
+    const params = {
+      page: page.value,
+      size: pageSize.value
+    }
+    const search = searchQuery.value.trim()
+    if (search) params.search = search
+    if (categoryFilter.value) params.category = categoryFilter.value
+    if (statusFilter.value !== '') params.status = statusFilter.value
+    const response = await admin.get('/products', { params })
     if (response.data.code === 200) {
       products.value = response.data.data.list
       total.value = response.data.data.total
@@ -251,6 +254,16 @@ const fetchProducts = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const handleSearch = () => {
+  page.value = 1
+  fetchProducts()
+}
+
+const handleFilterChange = () => {
+  page.value = 1
+  fetchProducts()
 }
 
 const toggleProductStatus = async (productId, currentStatus) => {
@@ -859,6 +872,7 @@ onMounted(() => {
 .products-table td { color: var(--text); }
 .products-table tr:last-child td { border-bottom: none; }
 .products-table tr:hover { background: var(--surface-2); }
+.products-table .empty-cell { padding: var(--space-8) var(--space-4); text-align: center; color: var(--text-2); }
 
 .status-badge { padding: 3px 12px; border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: var(--weight-medium); text-transform: none; letter-spacing: 0; }
 .status-available { background: var(--accent-soft); color: var(--accent); }

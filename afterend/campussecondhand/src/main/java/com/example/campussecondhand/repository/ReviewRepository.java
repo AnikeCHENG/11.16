@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.util.List;
 import java.util.Map;
 
 @Mapper
@@ -31,4 +32,30 @@ public interface ReviewRepository extends BaseMapper<Review> {
         WHERE target_id = #{sellerId}
         """)
     Map<String, Object> aggregateByTargetId(@Param("sellerId") Long sellerId);
+
+    /**
+     * 卖家收到的评价列表（最近 N 条）。
+     *
+     * <p>只取有文字内容的评价：纯星级（content 为空）在商品详情页显示为
+     * 一行空白，对买家没有信息量，反而会让"评价列表"看起来像加载失败。
+     * 时间在 SQL 里格式化，避免 JDBC Timestamp 被序列化成时间戳数字。
+     * {@code LIMIT} 的上限由 Service 层收敛，这里不做业务判断。</p>
+     */
+    @Select("""
+        SELECT r.id,
+               r.rating,
+               r.content,
+               DATE_FORMAT(r.create_time, '%Y-%m-%d %H:%i') AS createTime,
+               r.product_id AS productId,
+               u.username AS reviewerName
+        FROM review r
+        LEFT JOIN users u ON u.id = r.reviewer_id
+        WHERE r.target_id = #{sellerId}
+          AND r.content IS NOT NULL
+          AND r.content <> ''
+        ORDER BY r.create_time DESC
+        LIMIT #{limit}
+        """)
+    List<Map<String, Object>> listByTargetId(@Param("sellerId") Long sellerId,
+                                             @Param("limit") int limit);
 }

@@ -224,11 +224,12 @@ public class MessageController {
                 return ResponseEntity.ok(ApiResponse.error(401, "用户不存在"));
             }
 
-            boolean success = messageService.markAsRead(id);
+            boolean success = messageService.markAsRead(id, userOpt.get().getId());
             if (success) {
                 return ResponseEntity.ok(ApiResponse.success("已标记为已读", null));
             }
-            return ResponseEntity.ok(ApiResponse.error(404, "消息不存在"));
+            // 不区分「不存在」与「不是我的」：否则可以通过错误文案枚举别人的消息 id
+            return ResponseEntity.ok(ApiResponse.error(404, "消息不存在或无权操作"));
         } catch (Exception e) {
             return ResponseEntity.ok(ApiResponse.error(500, "操作失败"));
         }

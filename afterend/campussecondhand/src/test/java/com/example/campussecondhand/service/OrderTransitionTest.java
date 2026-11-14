@@ -56,7 +56,8 @@ class OrderTransitionTest {
                 mock(ProductRepository.class), mock(UserRepository.class), mock(ProductService.class),
                 new OrderFeeService(), fundService, new MockPaymentServiceImpl(),
                 new ResourcelessTransactionTemplate(), 30);
-        when(orderRepository.updateStatusIfMatch(anyLong(), anyInt(), anyInt())).thenReturn(1);
+        when(orderRepository.markCompletedIfPending(anyLong(), anyInt(), anyInt())).thenReturn(1);
+        when(orderRepository.markShippedIfPending(anyLong(), anyInt(), anyInt())).thenReturn(1);
     }
 
     private Order orderWithStatus(Integer status) {
@@ -79,8 +80,9 @@ class OrderTransitionTest {
         Order shipped = orderService.shipOrder(ORDER_ID, SELLER_ID);
 
         assertThat(shipped.getStatus()).isEqualTo(OrderStatus.PENDING_RECEIPT.getCode());
-        verify(orderRepository).updateStatusIfMatch(ORDER_ID,
-                OrderStatus.PENDING_SHIPMENT.getCode(), OrderStatus.PENDING_RECEIPT.getCode());
+        verify(orderRepository).markShippedIfPending(ORDER_ID,
+                OrderStatus.PENDING_SHIPMENT.getCode(),
+                OrderStatus.PENDING_RECEIPT.getCode());
     }
 
     @Test
@@ -93,7 +95,7 @@ class OrderTransitionTest {
                 .isInstanceOf(OrderService.OrderBusinessException.class)
                 .hasMessageContaining("只有卖家");
         verify(orderRepository, org.mockito.Mockito.never())
-                .updateStatusIfMatch(anyLong(), anyInt(), anyInt());
+                .markShippedIfPending(anyLong(), anyInt(), anyInt());
     }
 
     @Test
@@ -112,8 +114,7 @@ class OrderTransitionTest {
     void pending_payment_order_cannot_be_shipped() {
         when(orderRepository.selectById(ORDER_ID))
                 .thenReturn(orderWithStatus(OrderStatus.PENDING_PAYMENT.getCode()));
-        when(orderRepository.updateStatusIfMatch(ORDER_ID,
-                OrderStatus.PENDING_SHIPMENT.getCode(), OrderStatus.PENDING_RECEIPT.getCode()))
+        when(orderRepository.markShippedIfPending(anyLong(), anyInt(), anyInt()))
                 .thenReturn(0);
 
         assertThatThrownBy(() -> orderService.shipOrder(ORDER_ID, SELLER_ID))
@@ -131,7 +132,7 @@ class OrderTransitionTest {
 
         assertThat(completed.getStatus()).isEqualTo(OrderStatus.COMPLETED.getCode());
         assertThat(completed.getCompletedTime()).isNotNull();
-        verify(orderRepository).updateStatusIfMatch(ORDER_ID,
+        verify(orderRepository).markCompletedIfPending(ORDER_ID,
                 OrderStatus.PENDING_RECEIPT.getCode(), OrderStatus.COMPLETED.getCode());
     }
 
@@ -153,7 +154,7 @@ class OrderTransitionTest {
     void failed_confirm_receipt_does_not_credit_seller() {
         when(orderRepository.selectById(ORDER_ID))
                 .thenReturn(orderWithStatus(OrderStatus.PENDING_PAYMENT.getCode()));
-        when(orderRepository.updateStatusIfMatch(ORDER_ID,
+        when(orderRepository.markCompletedIfPending(ORDER_ID,
                 OrderStatus.PENDING_RECEIPT.getCode(), OrderStatus.COMPLETED.getCode()))
                 .thenReturn(0);
 
@@ -167,8 +168,7 @@ class OrderTransitionTest {
     void failed_ship_does_not_credit_seller() {
         when(orderRepository.selectById(ORDER_ID))
                 .thenReturn(orderWithStatus(OrderStatus.PENDING_PAYMENT.getCode()));
-        when(orderRepository.updateStatusIfMatch(ORDER_ID,
-                OrderStatus.PENDING_SHIPMENT.getCode(), OrderStatus.PENDING_RECEIPT.getCode()))
+        when(orderRepository.markShippedIfPending(anyLong(), anyInt(), anyInt()))
                 .thenReturn(0);
 
         assertThatThrownBy(() -> orderService.shipOrder(ORDER_ID, SELLER_ID))
@@ -186,7 +186,7 @@ class OrderTransitionTest {
                 .isInstanceOf(OrderService.OrderBusinessException.class)
                 .hasMessageContaining("只有买家");
         verify(orderRepository, never())
-                .updateStatusIfMatch(anyLong(), anyInt(), anyInt());
+                .markCompletedIfPending(anyLong(), anyInt(), anyInt());
     }
 
     @Test
@@ -194,7 +194,7 @@ class OrderTransitionTest {
     void pending_payment_order_cannot_be_confirmed() {
         when(orderRepository.selectById(ORDER_ID))
                 .thenReturn(orderWithStatus(OrderStatus.PENDING_PAYMENT.getCode()));
-        when(orderRepository.updateStatusIfMatch(ORDER_ID,
+        when(orderRepository.markCompletedIfPending(ORDER_ID,
                 OrderStatus.PENDING_RECEIPT.getCode(), OrderStatus.COMPLETED.getCode()))
                 .thenReturn(0);
 
@@ -208,7 +208,7 @@ class OrderTransitionTest {
     void cancelled_order_cannot_be_confirmed() {
         when(orderRepository.selectById(ORDER_ID))
                 .thenReturn(orderWithStatus(OrderStatus.CANCELLED.getCode()));
-        when(orderRepository.updateStatusIfMatch(ORDER_ID,
+        when(orderRepository.markCompletedIfPending(ORDER_ID,
                 OrderStatus.PENDING_RECEIPT.getCode(), OrderStatus.COMPLETED.getCode()))
                 .thenReturn(0);
 

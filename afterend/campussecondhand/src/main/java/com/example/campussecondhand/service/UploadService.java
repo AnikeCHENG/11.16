@@ -63,10 +63,20 @@ public class UploadService {
     private final Path root;
     private final long maxBytes;
 
+    /**
+     * 私有目录：认证截图这类「只有审核人员能看」的文件落在这里。
+     *
+     * <p>它<b>不</b>注册静态资源映射（见 {@code WebMvcConfig}），因此没有 URL 能直接取到，
+     * 只能经带鉴权的接口按申请记录读取。商品图、帖子图这类公开展示的图仍走公开目录。</p>
+     */
+    private final Path privateRoot;
+
     public UploadService(@Value("${app.upload.dir:uploads}") String uploadDir,
-                         @Value("${app.upload.max-bytes:2097152}") long maxBytes) {
+                         @Value("${app.upload.max-bytes:2097152}") long maxBytes,
+                         @Value("${app.upload.proof-dir:uploads-private}") String privateDir) {
         this.root = Paths.get(uploadDir).toAbsolutePath().normalize();
         this.maxBytes = maxBytes;
+        this.privateRoot = Paths.get(privateDir).toAbsolutePath().normalize();
     }
 
     /** 对外暴露落盘根目录，供 WebMvcConfig 注册静态资源映射 */
@@ -136,9 +146,85 @@ public class UploadService {
         return url;
     }
 
+    /**
+     * 保存一张「不公开」的图片（学生认证截图），返回不透明的文件名标识。
+     *
+     * <p>与 {@link #storeImage} 的区别有三处：</p>
+     * <ol>
+     *   <li>落在私有目录，且该目录没有静态资源映射——外部拿不到 URL；</li>
+     *   <li>返回的是纯文件名（如 {@code 9f2c....jpg}）而不是可访问路径，
+     *       数据库里只存这个标识；</li>
+     *   <li>只接受 jpg / png（认证截图不收 webp/gif）。</li>
+     * </ol>
+     *
+     * @param file 上传的文件
+     * @return 私有文件名标识
+     */
+    public String storePrivateImage(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException("请选择要上传的图片");
+        }
+        if (file.getSize() > maxBytes) {
+            throw new BadRequestException("图片不能超过 " + (maxBytes / 1024 / 1024) + "MB");
+        }
+        String declared = file.getContentType() == null
+                ? ""
+                : file.getContentType().toLowerCase(Locale.ROOT).trim();
+        // 认证截图只收两种格式，比公开图更严
+        if (!"image/jpeg".equals(declared) && !"image/png".equals(declared)) {
+            throw new BadRequestException("只支持 JPG / PNG 格式的认证截图");
+        }
+        byte[] head = readHead(file);
+        String sniffed = sniff(head);
+        if (sniffed == null || !sniffed.equals(declared)) {
+            throw new BadRequestException("文件内容不是有效的图片");
+        }
+
+        String fileName = UUID.randomUUID().toString().replace("-", "") + "." + TYPE_TO_EXT.get(sniffed);
+        Path target = privateRoot.resolve(fileName).normalize();
+        if (!target.startsWith(privateRoot)) {
+            throw new BadRequestException("非法的上传路径");
+        }
+        try {
+            Files.createDirectories(privateRoot);
+            file.transferTo(target);
+        } catch (IOException e) {
+            log.error("认证截图落盘失败: {}", target, e);
+            throw new IllegalStateException("图片保存失败", e);
+        }
+        log.info("认证截图已保存到私有目录: {}", fileName);
+        return fileName;
+    }
+
+    /**
+     * 读取私有目录中的认证截图。
+     *
+     * @param fileName 私有文件名标识
+     * @return 图片字节
+     * @throws BadRequestException 标识非法或文件不存在
+     */
+    public byte[] readPrivateImage(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            throw new BadRequestException("图片不存在");
+        }
+        // 文件名必须完全由服务端生成的形态构成，否则 ../ 之类能写出目录之外
+        if (!fileName.matches("^[0-9a-f]{32}\\.(jpg|png)$")) {
+            throw new BadRequestException("图片标识不合法");
+        }
+        Path target = privateRoot.resolve(fileName).normalize();
+        if (!target.startsWith(privateRoot)) {
+            throw new BadRequestException("非法的图片路径");
+        }
+        try {
+            return Files.readAllBytes(target);
+        } catch (IOException e) {
+            log.warn("读取认证截图失败: {}", target, e);
+            throw new BadRequestException("图片不存在");
+        }
+    }
+
     /** 只读文件头用于嗅探，不把整张图读进内存 */
-    private static byte[] readHead(MultipartFile file) {
-        try (InputStream in = file.getInputStream()) {
+    private static byte[] readHead(MultipartFile file) {        try (InputStream in = file.getInputStream()) {
             return in.readNBytes(12);
         } catch (IOException e) {
             throw new BadRequestException("无法读取上传的文件");

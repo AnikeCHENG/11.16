@@ -36,14 +36,14 @@
               <label class="field-label" for="p-price">商品价格 <span class="required">*</span></label>
               <div class="price-wrap">
                 <span class="price-symbol">¥</span>
-                <input id="p-price" type="number" v-model="form.price" class="input price-input" placeholder="0.00" min="0" step="0.01" required />
+                <input id="p-price" type="number" v-model="form.price" class="input price-input" placeholder="0.00" min="0" max="99999999.99" step="0.01" required />
               </div>
             </div>
             <div class="field">
               <label class="field-label" for="p-oprice">原价（可选）</label>
               <div class="price-wrap">
                 <span class="price-symbol">¥</span>
-                <input id="p-oprice" type="number" v-model="form.originalPrice" class="input price-input" placeholder="0.00" min="0" step="0.01" />
+                <input id="p-oprice" type="number" v-model="form.originalPrice" class="input price-input" placeholder="0.00" min="0" max="99999999.99" step="0.01" />
               </div>
             </div>
           </div>
@@ -271,7 +271,9 @@ async function handleSubmit() {
       alert(res.message || '发布失败，请重试')
     }
   } catch (e) {
-    alert(e.message || '发布失败，请重试')
+    // 业务失败时真实原因在后端返回体里（api/product.js 把 Error 包了一层，
+    // e.message 恒为 "Network request failed"）。与 Plaza.vue 的取法一致。
+    alert(e?.response?.message || e?.cause?.message || '发布失败，请重试')
   } finally {
     submitting.value = false
   }

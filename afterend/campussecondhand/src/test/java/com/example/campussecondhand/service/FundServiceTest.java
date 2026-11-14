@@ -27,6 +27,7 @@ import static org.mockito.Mockito.when;
 class FundServiceTest {
 
     private static final Long SELLER_ID = 3L;
+    private static final Long BUYER_ID = 2L;
     private static final Long ORDER_ID = 1L;
 
     private AccountRepository accountRepository;
@@ -99,6 +100,73 @@ class FundServiceTest {
         assertThatThrownBy(() -> fundService.creditSellerIncome(completedOrder("100.00")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("卖家账户不存在");
+        verify(accountRepository, never()).insertFlow(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    // ---------- 余额支付 / 退款回补 ----------
+
+    private Order buyerOrder(String payMethod) {
+        Order order = new Order();
+        order.setId(ORDER_ID);
+        order.setOrderNo("20251020150000009");
+        order.setBuyerId(BUYER_ID);
+        order.setSellerId(SELLER_ID);
+        order.setPaymentMethod(payMethod);
+        order.setPrice(new BigDecimal("120.00"));
+        order.setShippingFee(BigDecimal.ZERO);
+        return order;
+    }
+
+    @Test
+    @DisplayName("余额支付：条件扣款成功并写一条 OUT 流水")
+    void balance_payment_debits_account() {
+        Order order = buyerOrder("balance");
+        when(accountRepository.debit(BUYER_ID, new BigDecimal("120.00"))).thenReturn(1);
+        when(accountRepository.balanceOf(BUYER_ID)).thenReturn(new BigDecimal("380.00"));
+
+        fundService.debitForPurchase(order, BUYER_ID, new BigDecimal("120.00"));
+
+        verify(accountRepository).debit(BUYER_ID, new BigDecimal("120.00"));
+        verify(accountRepository).insertFlow(eq(BUYER_ID), eq(ORDER_ID), eq("20251020150000009"),
+                eq("OUT"), eq(new BigDecimal("120.00")), eq(new BigDecimal("380.00")),
+                eq("订单支付，余额扣款"));
+    }
+
+    @Test
+    @DisplayName("余额不足：抛 InsufficientBalanceException，且不写流水")
+    void insufficient_balance_fails_loudly() {
+        Order order = buyerOrder("balance");
+        when(accountRepository.debit(any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> fundService.debitForPurchase(order, BUYER_ID, new BigDecimal("120.00")))
+                .isInstanceOf(FundService.InsufficientBalanceException.class)
+                .hasMessageContaining("余额不足");
+        verify(accountRepository, never()).insertFlow(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("余额支付退款：把钱退回买家余额并写 IN 流水")
+    void balance_refund_credits_buyer() {
+        Order order = buyerOrder("余额");
+        when(accountRepository.credit(BUYER_ID, new BigDecimal("120.00"))).thenReturn(1);
+        when(accountRepository.balanceOf(BUYER_ID)).thenReturn(new BigDecimal("500.00"));
+
+        fundService.refundToBuyer(order, new BigDecimal("120.00"));
+
+        verify(accountRepository).credit(BUYER_ID, new BigDecimal("120.00"));
+        verify(accountRepository).insertFlow(eq(BUYER_ID), eq(ORDER_ID), eq("20251020150000009"),
+                eq("IN"), eq(new BigDecimal("120.00")), eq(new BigDecimal("500.00")),
+                eq("订单退款，余额退回"));
+    }
+
+    @Test
+    @DisplayName("第三方渠道退款不碰平台余额")
+    void third_party_refund_does_not_touch_balance() {
+        Order order = buyerOrder("支付宝");
+
+        fundService.refundToBuyer(order, new BigDecimal("120.00"));
+
+        verify(accountRepository, never()).credit(any(), any());
         verify(accountRepository, never()).insertFlow(any(), any(), any(), any(), any(), any(), any());
     }
 }

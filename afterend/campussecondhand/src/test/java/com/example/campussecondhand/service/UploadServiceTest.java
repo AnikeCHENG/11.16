@@ -24,7 +24,9 @@ class UploadServiceTest {
     Path tempDir;
 
     private UploadService service() {
-        return new UploadService(tempDir.toString(), 1024 * 1024);
+        // 第三个参数是认证截图的私有目录，与公开目录分开
+        return new UploadService(tempDir.toString(), 1024 * 1024,
+                tempDir.resolve("private").toString());
     }
 
     /** 最小可用的 PNG 文件头 */
@@ -46,6 +48,47 @@ class UploadServiceTest {
         Path stored = tempDir.resolve(url.substring("/uploads/".length()));
         assertThat(stored).exists();
         assertThat(Files.readAllBytes(stored)).isEqualTo(PNG);
+    }
+
+    @Test
+    @DisplayName("私有截图：只收 jpg/png，落在私有目录，返回的是文件名而非可访问路径")
+    void stores_private_image_without_public_path() throws Exception {
+        MockMultipartFile png = new MockMultipartFile("file", "我的截图.png", "image/png", PNG);
+
+        String proofId = service().storePrivateImage(png);
+
+        // 返回的不是 URL：外部拿不到任何可直接访问的地址
+        assertThat(proofId).matches("[0-9a-f]{32}\\.png").doesNotContain("/");
+        assertThat(tempDir.resolve("private").resolve(proofId)).exists();
+
+        // GIF 不在认证截图的白名单里（公开图允许，截图更严）
+        assertThatThrownBy(() -> service().storePrivateImage(
+                new MockMultipartFile("file", "a.gif", "image/gif", PNG)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("JPG / PNG");
+    }
+
+    @Test
+    @DisplayName("私有截图：声明类型与真实内容不符时拒绝")
+    void private_image_checks_magic_bytes() {
+        assertThatThrownBy(() -> service().storePrivateImage(
+                new MockMultipartFile("file", "a.png", "image/png", JPEG)))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    @DisplayName("私有截图：读回时标识非法或文件缺失都报「图片不存在」")
+    void reads_private_image_safely() throws Exception {
+        MockMultipartFile png = new MockMultipartFile("file", "s.png", "image/png", PNG);
+        String proofId = service().storePrivateImage(png);
+
+        assertThat(service().readPrivateImage(proofId)).isEqualTo(PNG);
+        // 路径穿越尝试
+        assertThatThrownBy(() -> service().readPrivateImage("../../secret.png"))
+                .isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> service().readPrivateImage(
+                "0123456789abcdef0123456789abcdef.png"))
+                .isInstanceOf(BadRequestException.class);
     }
 
     @Test

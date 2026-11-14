@@ -31,13 +31,47 @@ public class FundService {
 
     private static final Logger log = LoggerFactory.getLogger(FundService.class);
 
-    /** 流水方向：收入（卖家应收入账）；将来若有提现/退款，加 OUT 即可 */
+    /** 流水方向：收入（卖家应收入账 / 退款退回买家余额） */
     private static final String DIRECTION_IN = "IN";
+
+    /** 流水方向：支出（买家余额支付扣款） */
+    private static final String DIRECTION_OUT = "OUT";
 
     private final AccountRepository accountRepository;
 
     public FundService(AccountRepository accountRepository) {
         this.accountRepository = accountRepository;
+    }
+
+    /** 余额支付可用：兼容前端传 {@code balance} 与历史/测试里传的「余额」 */
+    public static boolean isBalanceMethod(String payMethod) {
+        return payMethod != null
+                && ("balance".equalsIgnoreCase(payMethod.trim())
+                || "余额".equals(payMethod.trim()));
+    }
+
+    /**
+     * 该订单是否产生过资金流水。
+     *
+     * <p>用于判断订单能否被物理删除：只要动过钱（放款给卖家、退款给买家、
+     * 余额支付扣款），删掉订单就只剩一条没有订单可对应的流水，对账时无法解释
+     * 这笔钱冲哪笔单来的。</p>
+     *
+     * @param orderId 订单 id
+     * @return true 表示有流水
+     */
+    public boolean hasFundFlow(Long orderId) {
+        if (orderId == null) {
+            return false;
+        }
+        return accountRepository.countFlowsByOrder(orderId) > 0;
+    }
+
+    /** 余额不足：由 Controller 转成 400，事务内抛出以保证支付状态一起回滚 */
+    public static class InsufficientBalanceException extends RuntimeException {
+        public InsufficientBalanceException(String message) {
+            super(message);
+        }
     }
 
     /**
@@ -73,5 +107,73 @@ public class FundService {
                 "订单完成，卖家应收入账");
         log.info("卖家入账: userId={}, orderNo={}, amount={}, balanceAfter={}",
                 order.getSellerId(), order.getOrderNo(), amount, balanceAfter);
+    }
+
+    /**
+     * 余额支付：从买家账户扣款并写一条 OUT 流水。
+     *
+     * <p>调用方必须处在 {@code payOrder} 的事务里。扣款是单条条件 UPDATE，
+     * 余额不足时影响行数为 0，抛 {@link InsufficientBalanceException} 让外层
+     * 事务回滚——绝不能用"返回失败"的方式收场，否则已经写好的支付状态会提交。</p>
+     *
+     * @param order   待支付订单（提供 orderNo / id 用于流水）
+     * @param buyerId 付款买家
+     * @param amount  买家实付（成交价 + 运费）
+     */
+    public void debitForPurchase(Order order, Long buyerId, BigDecimal amount) {
+        if (buyerId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            log.info("订单无需扣款，跳过: orderNo={}, amount={}", order.getOrderNo(), amount);
+            return;
+        }
+
+        int updated = accountRepository.debit(buyerId, amount);
+        if (updated == 0) {
+            throw new InsufficientBalanceException("余额不足，请选择其他支付方式或先出售闲置");
+        }
+
+        BigDecimal balanceAfter = accountRepository.balanceOf(buyerId);
+        accountRepository.insertFlow(buyerId, order.getId(), order.getOrderNo(),
+                DIRECTION_OUT, amount,
+                balanceAfter != null ? balanceAfter : BigDecimal.ZERO,
+                "订单支付，余额扣款");
+        log.info("余额支付扣款: userId={}, orderNo={}, amount={}, balanceAfter={}",
+                buyerId, order.getOrderNo(), amount, balanceAfter);
+    }
+
+    /**
+     * 退款成功时把实付金额退回买家余额（仅余额支付的订单）。
+     *
+     * <p>第三方渠道（Mock 支付宝/微信）的退款由渠道侧处理，本方法只维护
+     * 平台内余额账本。退款只发生在确认收货前，卖家尚未入账，因此不需要
+     * 从卖家余额扣回；{@code uk_order_direction(order_id, direction)}
+     * 保证同一订单不会退回两次。</p>
+     *
+     * @param order  已推进到「已退款」的订单
+     * @param amount 退款金额（成交价 + 运费）
+     */
+    public void refundToBuyer(Order order, BigDecimal amount) {
+        if (!isBalanceMethod(order.getPaymentMethod())) {
+            return;
+        }
+        if (order.getBuyerId() == null || amount == null
+                || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            log.info("退款无需回补余额，跳过: orderNo={}, amount={}", order.getOrderNo(), amount);
+            return;
+        }
+
+        int updated = accountRepository.credit(order.getBuyerId(), amount);
+        if (updated == 0) {
+            // 钱已收下却退不回去：必须整体回滚，让退款状态保持原样
+            throw new IllegalStateException(
+                    "买家账户不存在，无法退回余额: userId=" + order.getBuyerId());
+        }
+
+        BigDecimal balanceAfter = accountRepository.balanceOf(order.getBuyerId());
+        accountRepository.insertFlow(order.getBuyerId(), order.getId(), order.getOrderNo(),
+                DIRECTION_IN, amount,
+                balanceAfter != null ? balanceAfter : amount,
+                "订单退款，余额退回");
+        log.info("退款回补余额: userId={}, orderNo={}, amount={}, balanceAfter={}",
+                order.getBuyerId(), order.getOrderNo(), amount, balanceAfter);
     }
 }

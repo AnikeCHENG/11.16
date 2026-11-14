@@ -59,10 +59,10 @@ public class DevMigrationController {
      * <p><b>整批一个事务</b>：中途失败则全部回滚，避免出现「一半用户被改写、
      * 一半还是明文」的中间态。</p>
      *
-     * <p>当前库中密码已全部为 BCrypt，本接口会返回 {@code scanned>0, migrated=0}。</p>
+     * <p>当前库中密码已全部为 BCrypt，本接口预期返回 {@code candidates>0, migrated=0}。</p>
      *
-     * @return 扫描数、迁移数与逐条明细；<b>明细含用户 id 与原密码</b>，
-     *         故只在 dev 环境可达，严禁在生产暴露
+     * @return 候选数、迁移数、跳过数与逐条明细；<b>明细只含用户 id 与用户名，不含口令</b>，
+     *         但接口本身具备批量改写密码的能力，故只在 dev 环境可达，严禁在生产暴露
      */
     @PostMapping("/migrate-passwords")
     @Transactional

@@ -310,6 +310,7 @@ import VideoBackground from '../components/VideoBackground.vue'
 import { ref, onMounted, nextTick } from 'vue'
 import { getProductList, searchProducts } from '../api/product'
 import { getDashboardStats } from '../api/dashboard'
+import { firstImage } from '../utils/images'
 
 const router = useRouter()
 // 购物车角标已由 AppNavbar 统一持有（useCartStore 是唯一数据源），
@@ -482,7 +483,7 @@ async function loadProducts() {
         id: item.id,
         title: item.title,
         price: `¥${item.price}`,
-        img: item.images || ''
+        img: firstImage(item.images, '')
       }))
     }
   } catch (e) {
@@ -556,7 +557,7 @@ const activities = ref([
       '专区商品：棉被、羽绒服、毛衣、暖手宝等',
       '优惠活动：专区商品满100减20',
       '品质保证：所有商品均经过平台审核',
-      '售后保障：7天无理由退换'
+      '售后保障：确认收货前可申请退款，平台介入处理'
     ]
   }
 ])

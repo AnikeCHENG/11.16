@@ -8,11 +8,15 @@ package com.example.campussecondhand.enums;
  * <p>状态流转：</p>
  * <pre>
  *   0 待支付 ──支付──&gt; 1 待发货 ──发货──&gt; 2 待收货 ──确认收货──&gt; 3 已完成
- *      │
+ *      │                 │                 │
+ *      │                 └──申请退款──&gt; 5 退款中 ──同意──&gt; 6 已退款
+ *      │                                   │
+ *      │                                   └──拒绝/撤销──&gt; 原状态(1/2)
  *      └──取消/超时──&gt; 4 已取消
  * </pre>
  *
- * <p>注意：仅 {@link #PENDING_PAYMENT} 允许支付与取消，其余状态为终态或需卖家/买家推进。</p>
+ * <p>注意：仅 {@link #PENDING_PAYMENT} 允许支付与取消；退款仅对已支付且
+ * 未确认收货的订单（1/2）开放</p>
  */
 public enum OrderStatus {
 
@@ -29,7 +33,13 @@ public enum OrderStatus {
     COMPLETED(3, "已完成"),
 
     /** 4：已取消，商品已恢复为在售 */
-    CANCELLED(4, "已取消");
+    CANCELLED(4, "已取消"),
+
+    /** 5：退款中，买家已申请，商品仍处于锁定状态，等待卖家/管理员处理 */
+    REFUNDING(5, "退款中"),
+
+    /** 6：已退款，商品已恢复为在售；终态 */
+    REFUNDED(6, "已退款");
 
     private final int code;
     private final String label;
@@ -73,5 +83,25 @@ public enum OrderStatus {
     /** 判断给定数据库值是否为已完成 */
     public static boolean isCompleted(Integer code) {
         return fromCode(code) == COMPLETED;
+    }
+
+    /** 判断给定数据库值是否为退款中 */
+    public static boolean isRefunding(Integer code) {
+        return fromCode(code) == REFUNDING;
+    }
+
+    /** 判断给定数据库值是否为已退款 */
+    public static boolean isRefunded(Integer code) {
+        return fromCode(code) == REFUNDED;
+    }
+
+    /**
+     * 判断给定数据库值是否为终态。
+     *
+     * <p>终态只允许清理（从用户列表隐藏），不允许再被改成其他状态。
+     * 退款中(5)不是终态，订单仍在交易流程里。</p>
+     */
+    public static boolean isTerminal(Integer code) {
+        return isCompleted(code) || isCancelled(code) || isRefunded(code);
     }
 }

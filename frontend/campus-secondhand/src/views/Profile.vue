@@ -77,6 +77,11 @@
               <div class="stat-value">{{ stats.views }}</div>
               <div class="stat-label">浏览</div>
             </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <div class="stat-value">¥{{ balanceText }}</div>
+              <div class="stat-label">余额</div>
+            </div>
           </div>
           
           <div class="profile-actions">
@@ -238,15 +243,33 @@
                 <div class="order-meta">
                   <span class="order-seller">卖家：{{ order.seller }}</span>
                 </div>
+                <div v-if="order.refundReason || order.refundReply || order.statusCode === 5 || order.statusCode === 6"
+                     class="order-refund">
+                  <p v-if="order.refundReason"><span>退款原因：</span>{{ order.refundReason }}</p>
+                  <p v-if="order.refundReply"><span>处理说明：</span>{{ order.refundReply }}</p>
+                  <p v-if="order.refundAmount"><span>退款金额：</span>¥{{ order.refundAmount }}</p>
+                  <p v-if="order.refundApplyTime"><span>申请时间：</span>{{ order.refundApplyTime }}</p>
+                  <p v-if="order.refundTime"><span>退款时间：</span>{{ order.refundTime }}</p>
+                </div>
               </div>
               <div class="order-price-section">
                 <div class="order-price">{{ order.price }}</div>
                 <div class="order-actions">
                   <button v-if="order.statusCode === 0" class="order-btn primary" @click="goPay(order)">去支付</button>
                   <!-- 发货只给卖家看：买家看到"待发货"时无货可发 -->
-                  <button v-if="order.statusCode === 1 && !order.isBuyer" class="order-btn primary" @click="shipOrderItem(order)">发货</button>
-                  <button v-if="order.statusCode === 2" class="order-btn primary" @click="confirmReceive(order)">确认收货</button>
+                  <button v-if="order.statusCode === 1 && order.isSeller" class="order-btn primary" @click="shipOrderItem(order)">发货</button>
+                  <!-- 确认收货只能是买家：卖家看自己的销售单时状态也是 2 -->
+                  <button v-if="order.statusCode === 2 && order.isBuyer" class="order-btn primary" @click="confirmReceive(order)">确认收货</button>
                   <button v-if="order.statusCode === 0" class="order-btn danger" @click="cancelOrderItem(order)">取消订单</button>
+                  <!-- 退款：买家在发货前申请；卖家处理「退款中」的申请 -->
+                  <button v-if="(order.statusCode === 1 || order.statusCode === 2) && order.isBuyer"
+                          class="order-btn secondary" @click="applyRefundItem(order)">申请退款</button>
+                  <button v-if="order.statusCode === 5 && order.isBuyer"
+                          class="order-btn secondary" @click="cancelRefundItem(order)">撤销退款申请</button>
+                  <button v-if="order.statusCode === 5 && order.isSeller"
+                          class="order-btn primary" @click="approveRefundItem(order)">同意退款</button>
+                  <button v-if="order.statusCode === 5 && order.isSeller"
+                          class="order-btn danger" @click="rejectRefundItem(order)">拒绝退款</button>
                   <!--
                     评价只给「买家 + 已完成 + 未评价」的订单显示。
                     三个条件缺一不可：卖家评自己无意义，未完成交易不该评价，
@@ -360,46 +383,183 @@
             <p class="verify-hint">你发布的商品将免除 0.3% 平台服务费，商品页与聊天中会展示认证徽章。</p>
           </section>
 
-          <section v-else class="card verify-form-card">
-            <h3 class="verify-title">学生认证</h3>
-            <p class="verify-hint">
-              认证后可免除平台 0.3% 服务费，并在商品详情、聊天窗口展示认证徽章。
-            </p>
-            <div class="field">
-              <label class="field-label" for="v-no">学号 <span class="required">*</span></label>
-              <input
-                id="v-no"
-                v-model="verifyForm.studentNo"
-                class="input"
-                type="text"
-                placeholder="20 开头的 10~12 位数字"
-                maxlength="20"
-              />
-            </div>
-            <div class="field">
-              <label class="field-label" for="v-name">真实姓名 <span class="required">*</span></label>
-              <input
-                id="v-name"
-                v-model="verifyForm.realName"
-                class="input"
-                type="text"
-                placeholder="请填写真实姓名"
-                maxlength="50"
-              />
-            </div>
-            <p v-if="verifyError" class="verify-error">{{ verifyError }}</p>
-            <button
-              class="btn btn-primary verify-submit"
-              type="button"
-              :disabled="verifying"
-              @click="handleStudentVerify"
-            >
-              {{ verifying ? '提交中…' : '提交认证' }}
-            </button>
-            <p class="verify-hint verify-hint--tip">
-              当前为模拟校验（仅校验学号格式与姓名非空），接口已预留，未来可对接教务系统或改为人工审核。
-            </p>
-          </section>
+          <template v-else>
+            <section class="card verify-form-card">
+              <h3 class="verify-title">方式一：学号快速认证</h3>
+              <p class="verify-hint">
+                认证后可免除平台 0.3% 服务费，并在商品详情、聊天窗口展示认证徽章。
+              </p>
+              <div class="field">
+                <label class="field-label" for="v-no">学号 <span class="required">*</span></label>
+                <input
+                  id="v-no"
+                  v-model="verifyForm.studentNo"
+                  class="input"
+                  type="text"
+                  placeholder="20 开头的 10~12 位数字"
+                  maxlength="20"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="v-name">真实姓名 <span class="required">*</span></label>
+                <input
+                  id="v-name"
+                  v-model="verifyForm.realName"
+                  class="input"
+                  type="text"
+                  placeholder="请填写真实姓名"
+                  maxlength="50"
+                />
+              </div>
+              <p v-if="verifyError" class="verify-error">{{ verifyError }}</p>
+              <button
+                class="btn btn-primary verify-submit"
+                type="button"
+                :disabled="verifying"
+                @click="handleStudentVerify"
+              >
+                {{ verifying ? '提交中…' : '提交认证' }}
+              </button>
+              <p class="verify-hint verify-hint--tip">
+                当前为模拟校验（仅校验学号格式与姓名非空），接口已预留，未来可对接教务系统或改为人工审核。
+              </p>
+            </section>
+
+            <!-- 辅助认证：支付宝学生认证截图（人工审核），供无法完成上方认证的用户 -->
+            <section class="card verify-shot-card">
+              <h3 class="verify-title">方式二：支付宝学生认证截图认证（辅助认证）</h3>
+              <div class="verify-shot-notice">
+                <p class="verify-shot-notice__title">支付宝学生认证截图认证说明：</p>
+                <p>
+                  本方式仅作为学校邮箱认证的辅助认证方式。若你无法完成学校邮箱认证，可打开支付宝，搜索"学生认证"或"校园生活"，按提示完成学生身份验证后，将认证结果页截图上传。截图需清晰显示学校名称和认证状态。请勿上传支付宝账号、密码、支付密码、短信验证码，可对身份证号、完整学号等敏感信息进行打码。
+                </p>
+              </div>
+
+              <!-- 已提交申请的进度：待审核 / 已拒绝（可重新提交）/ 已过期 -->
+              <div v-if="shotStatus" class="verify-shot-status" :class="`is-${shotStatus.status}`">
+                <template v-if="shotStatus.status === 'pending'">
+                  <p class="verify-shot-status__title">⏳ 已提交，等待管理员审核</p>
+                  <p class="verify-shot-status__meta">
+                    提交时间：{{ formatDate(shotStatus.createdAt) }}。审核通过后将自动获得学生认证徽章。
+                  </p>
+                </template>
+                <template v-else-if="shotStatus.status === 'rejected'">
+                  <p class="verify-shot-status__title">❌ 审核未通过</p>
+                  <p class="verify-shot-status__meta">
+                    拒绝理由：{{ shotStatus.rejectReason || '未填写' }}
+                  </p>
+                  <p class="verify-shot-status__meta">你可以核对截图后重新提交。</p>
+                </template>
+                <template v-else-if="shotStatus.status === 'expired'">
+                  <p class="verify-shot-status__title">🕒 上次认证已过期</p>
+                  <p class="verify-shot-status__meta">
+                    如需继续使用认证权益，请重新提交认证截图。
+                  </p>
+                </template>
+              </div>
+
+              <div class="field">
+                <label class="field-label" for="sv-name">真实姓名 <span class="required">*</span></label>
+                <input
+                  id="sv-name"
+                  v-model="shotForm.realName"
+                  class="input"
+                  type="text"
+                  placeholder="请填写真实姓名（仅用于审核，对外展示时会脱敏）"
+                  maxlength="50"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="sv-school">学校名称 <span class="required">*</span></label>
+                <input
+                  id="sv-school"
+                  v-model="shotForm.school"
+                  class="input"
+                  type="text"
+                  placeholder="请填写学校全称"
+                  maxlength="100"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="sv-no">学号（选填）</label>
+                <input
+                  id="sv-no"
+                  v-model="shotForm.studentNo"
+                  class="input"
+                  type="text"
+                  placeholder="选填；保存与展示时会脱敏"
+                  maxlength="20"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="sv-year">入学年份 <span class="required">*</span></label>
+                <select id="sv-year" v-model="shotForm.enrollmentYear" class="input">
+                  <option value="">请选择入学年份</option>
+                  <option v-for="y in enrollmentYearOptions" :key="y" :value="y">{{ y }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label" for="sv-dept">学院 / 专业（选填）</label>
+                <input
+                  id="sv-dept"
+                  v-model="shotForm.department"
+                  class="input"
+                  type="text"
+                  placeholder="选填"
+                  maxlength="100"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="sv-image">
+                  支付宝学生认证结果截图 <span class="required">*</span>
+                </label>
+                <input
+                  id="sv-image"
+                  class="input input-file"
+                  type="file"
+                  accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                  :disabled="shotUploading"
+                  @change="onShotFileChange"
+                />
+                <p class="verify-shot-field-hint">
+                  支持 JPG / PNG，不超过 5MB。截图需清晰显示学校名称和认证状态。
+                </p>
+                <img
+                  v-if="shotPreviewUrl"
+                  :src="shotPreviewUrl"
+                  alt="认证截图预览"
+                  class="verify-shot-preview"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="sv-remark">备注说明（选填）</label>
+                <input
+                  id="sv-remark"
+                  v-model="shotForm.remark"
+                  class="input"
+                  type="text"
+                  placeholder="选填，需要向审核人员补充说明的内容"
+                  maxlength="255"
+                />
+              </div>
+              <label class="verify-shot-agree">
+                <input type="checkbox" v-model="shotForm.agree" />
+                <span>
+                  我同意平台收集以上信息（真实姓名、学校、学号、入学年份、认证截图等），
+                  <b>仅用于本平台学生身份审核</b>；本功能不收集支付宝账号、密码、支付密码、短信验证码。
+                </span>
+              </label>
+              <p v-if="shotError" class="verify-error">{{ shotError }}</p>
+              <button
+                class="btn btn-primary verify-submit"
+                type="button"
+                :disabled="shotSubmitting || shotUploading"
+                @click="submitScreenshotVerify"
+              >
+                {{ shotUploading ? '截图上传中…' : shotSubmitting ? '提交中…' : '提交截图认证' }}
+              </button>
+            </section>
+          </template>
         </div>
 
         <!-- 评价对话框：自绘而非用 el-dialog，避免为一处交互引入额外依赖 -->
@@ -575,8 +735,9 @@
                     v-model="editForm.username" 
                     placeholder="请输入用户名"
                     maxlength="20"
+                    disabled
                   />
-                  <span class="char-count">{{ editForm.username.length }}/20</span>
+                  <span class="char-count">用户名用于登录，暂不支持修改</span>
                 </div>
                 
                 <div class="form-group">
@@ -642,14 +803,16 @@
 import { ref, reactive, computed, h, onMounted } from 'vue'
 import VerifiedBadge from '../components/VerifiedBadge.vue'
 import StarRating from '../components/StarRating.vue'
-import { submitReview, studentVerify, getOrderReview } from '../api/review'
+import { submitReview, studentVerify, getOrderReview, submitScreenshotVerification, getMyScreenshotVerification, uploadVerificationProof } from '../api/review'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { updateProfile, getProfile } from '../api/user'
 import { getMyProducts, deleteProduct as deleteProductAPI } from '../api/product'
-import { getOrderList, confirmOrder, shipOrder, cancelOrderById } from '../api/order'
+import { getOrderList, confirmOrder, shipOrder, cancelOrderById, applyRefund, approveRefund, rejectRefund, cancelRefundRequest } from '../api/order'
 import { getFavoriteList, removeFavoriteById, getHistoryList, clearHistory } from '../api/favorites'
 import { uploadImage } from '../api/upload'
+import { getSessionUserId, getSessionUsername } from '../utils/session'
+import { firstImage } from '../utils/images'
 
 const router = useRouter()
 function go(path) { router.push(path) }
@@ -658,7 +821,9 @@ const activeTab = ref('listings')
 const loading = ref(true)
 
 const userInfo = ref({
-  username: localStorage.getItem('username') || '用户',
+  // 登录页实际写的是 user 键（JSON），username 键只有旧会话才有；
+  // 这里用统一的会话工具取，取不到时下面的 loadAllData() 会用服务端数据覆盖
+  username: getSessionUsername() || '用户',
   avatar: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"%3E%3Ccircle cx="20" cy="20" r="20" fill="%23333"/%3E%3Ccircle cx="20" cy="16" r="6" fill="%23666"/%3E%3Cpath d="M8 36c0-6.6 5.4-12 12-12s12 5.4 12 12" fill="%23666"/%3E%3C/svg%3E',
   bio: '',
   location: '校园',
@@ -674,8 +839,11 @@ const stats = ref({
   listings: 0,
   sold: 0,
   favorites: 0,
-  views: 0
+  views: 0,
+  balance: 0
 })
+
+const balanceText = computed(() => Number(stats.value.balance || 0).toFixed(2))
 
 const ShoppingBag = {
   render() {
@@ -840,6 +1008,132 @@ const verifyError = ref('')
 
 /** 认证状态以 userInfo 为准：它来自 /api/user/profile，是服务端确认过的 */
 const studentVerified = computed(() => userInfo.value.studentVerified === true)
+
+/* ---- 支付宝学生认证截图辅助认证 ----
+ * 仅在未通过既有认证时可用：提交后进入待审核，由管理员人工审核。
+ * 资料（姓名/学号等）仅用于本平台学生身份审核，列表展示由后端脱敏。
+ */
+const shotForm = reactive({
+  realName: '',
+  school: '',
+  studentNo: '',
+  enrollmentYear: '',
+  department: '',
+  proofImage: '',
+  remark: '',
+  agree: false
+})
+const shotUploading = ref(false)
+const shotSubmitting = ref(false)
+const shotError = ref('')
+/** 最新一条申请记录（pending/approved/rejected/expired），null 表示从未提交 */
+const shotStatus = ref(null)
+/** 本地预览用的 objectURL（截图存于私有目录，没有可访问的 URL） */
+const shotPreviewUrl = ref('')
+
+/** 入学年份下拉：2000 ~ 当前年份 */
+const enrollmentYearOptions = computed(() => {
+  const now = new Date().getFullYear()
+  const years = []
+  for (let y = now; y >= 2000; y--) years.push(y)
+  return years
+})
+
+/** 拉取我的截图认证进度，进入认证 tab 与提交后都会调用 */
+async function loadScreenshotStatus() {
+  if (studentVerified.value) return
+  try {
+    const res = await getMyScreenshotVerification()
+    shotStatus.value = res.code === 200 ? res.data : null
+    // 被拒/过期后重新提交时，把上次的学校与姓名带回来，少打一遍字
+    if (res.code === 200 && res.data &&
+        (res.data.status === 'rejected' || res.data.status === 'expired')) {
+      shotForm.realName = shotForm.realName || res.data.realName || ''
+      shotForm.school = shotForm.school || res.data.school || ''
+      shotForm.studentNo = shotForm.studentNo || res.data.studentNo || ''
+      shotForm.enrollmentYear = shotForm.enrollmentYear || res.data.enrollmentYear || ''
+      shotForm.department = shotForm.department || res.data.department || ''
+    }
+  } catch (e) {
+    console.error('Failed to load screenshot verification status:', e)
+  }
+}
+
+/**
+ * 选择截图文件：本地校验格式与大小后上传到私有目录，换回文件名标识。
+ * 后端上传接口已做魔术字节嗅探与 UUID 重命名，这里的前置校验只为即时反馈。
+ *
+ * <p>预览用本地 objectURL：截图落在不公开的私有目录里，没有可访问的 URL。</p>
+ */
+async function onShotFileChange(event) {
+  shotError.value = ''
+  const file = event.target.files && event.target.files[0]
+  if (!file) return
+  const okType = ['image/jpeg', 'image/png'].includes(file.type)
+  if (!okType) {
+    shotError.value = '截图仅支持 JPG / PNG 格式'
+    event.target.value = ''
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    shotError.value = '截图不能超过 5MB'
+    event.target.value = ''
+    return
+  }
+  shotUploading.value = true
+  try {
+    shotForm.proofImage = await uploadVerificationProof(file)
+    if (shotPreviewUrl.value) URL.revokeObjectURL(shotPreviewUrl.value)
+    shotPreviewUrl.value = URL.createObjectURL(file)
+  } catch (e) {
+    shotError.value = e.message || '截图上传失败，请重试'
+    shotForm.proofImage = ''
+    event.target.value = ''
+  } finally {
+    shotUploading.value = false
+  }
+}
+
+/** 提交截图认证申请：校验必填项与勾选同意，成功后刷新进度显示"待审核" */
+async function submitScreenshotVerify() {
+  shotError.value = ''
+  if (!shotForm.realName.trim()) { shotError.value = '请填写真实姓名'; return }
+  if (!shotForm.school.trim()) { shotError.value = '请填写学校名称'; return }
+  if (!shotForm.enrollmentYear) { shotError.value = '请选择入学年份'; return }
+  if (!shotForm.proofImage) { shotError.value = '请上传支付宝学生认证结果截图'; return }
+  if (!shotForm.agree) { shotError.value = '请先勾选同意信息使用说明'; return }
+
+  shotSubmitting.value = true
+  try {
+    const res = await submitScreenshotVerification({
+      realName: shotForm.realName.trim(),
+      school: shotForm.school.trim(),
+      studentNo: shotForm.studentNo.trim() || null,
+      enrollmentYear: String(shotForm.enrollmentYear),
+      department: shotForm.department.trim() || null,
+      proofImage: shotForm.proofImage,
+      remark: shotForm.remark.trim() || null,
+      agree: shotForm.agree
+    })
+    if (res.code === 200) {
+      ElMessage.success(res.message || '已提交，等待管理员审核')
+      shotForm.proofImage = ''
+      shotForm.remark = ''
+      if (shotPreviewUrl.value) {
+        URL.revokeObjectURL(shotPreviewUrl.value)
+        shotPreviewUrl.value = ''
+      }
+      await loadScreenshotStatus()
+    } else {
+      shotError.value = res.message || '提交失败，请稍后重试'
+    }
+  } catch (e) {
+    shotError.value = e.message || '提交失败，请稍后重试'
+  } finally {
+    shotSubmitting.value = false
+  }
+}
+
 const paging = reactive(
   Object.fromEntries(
     PAGED_TABS.map((id) => [id, { page: 1, size: 10, total: 0 }])
@@ -853,25 +1147,13 @@ const paging = reactive(
  * Login.vue 现已补写 userId，这里仍保留 JSON 兜底以兼容旧会话。
  */
 function resolveCurrentUserId() {
-  for (const store of [localStorage, sessionStorage]) {
-    const direct = parseInt(store.getItem('userId') || '', 10)
-    if (Number.isFinite(direct) && direct > 0) return direct
-  }
-  for (const store of [localStorage, sessionStorage]) {
-    try {
-      const raw = store.getItem('user')
-      if (!raw) continue
-      const id = parseInt(JSON.parse(raw)?.id, 10)
-      if (Number.isFinite(id) && id > 0) return id
-    } catch { /* 忽略解析失败 */ }
-  }
-  return 0
+  return getSessionUserId()
 }
 
 const currentUserId = ref(resolveCurrentUserId())
 
 /**
- * 订单状态映射（后端 orders.status 为 0-4 五态）。
+ * 订单状态映射（后端 orders.status 为 0-6 七态）。
  * cls 复用既有 .order-status 的三个样式变体，避免新增 CSS。
  */
 const ORDER_STATUS_MAP = {
@@ -879,7 +1161,9 @@ const ORDER_STATUS_MAP = {
   1: { cls: 'pending', text: '待发货' },
   2: { cls: 'pending', text: '待收货' },
   3: { cls: 'completed', text: '已完成' },
-  4: { cls: 'cancelled', text: '已取消' }
+  4: { cls: 'cancelled', text: '已取消' },
+  5: { cls: 'pending', text: '退款中' },
+  6: { cls: 'cancelled', text: '已退款' }
 }
 
 async function loadUserProfile() {
@@ -897,6 +1181,8 @@ async function loadUserProfile() {
       userInfo.value.studentVerified = data.studentVerified === true
       userInfo.value.studentNo = data.studentNo || ''
       userInfo.value.realName = data.realName || ''
+      // 余额由后端 /profile 返回，收银台也依赖它判断「余额支付」是否够用
+      stats.value.balance = Number(data.balance) || 0
     }
   } catch (e) {
     console.error('Failed to load user profile:', e)
@@ -912,7 +1198,7 @@ async function loadMyProducts() {
         id: p.id,
         title: p.title,
         price: `¥${p.price}`,
-        image: p.images ? p.images.split(',')[0] : '/sample/phone.svg',
+        image: firstImage(p.images),
         // 商品状态 0=下架 1=在售 2=已售出
         status: p.status === 1 ? 'selling' : p.status === 2 ? 'sold' : 'offline',
         statusText: p.status === 1 ? '在售' : p.status === 2 ? '已售' : '已下架',
@@ -993,7 +1279,22 @@ async function loadOrders() {
         buyerId: order.buyerId,
         productId: order.productId,
         // 我是买家则联系卖家，我是卖家则联系买家
-        isBuyer: Number(order.buyerId) === Number(currentUserId.value),
+        // 角色以服务端返回的 isBuyer/isSeller 为准；旧响应缺字段时才本地兜底
+        isBuyer: order.isBuyer != null
+          ? order.isBuyer === true
+          : Number(order.buyerId) === Number(currentUserId.value),
+        isSeller: order.isSeller != null
+          ? order.isSeller === true
+          : Number(order.sellerId) === Number(currentUserId.value),
+        // 退款快照：状态 5/6 时在订单卡里展示原因、金额与处理结果
+        refundFromStatus: order.refundFromStatus,
+        refundReason: order.refundReason || '',
+        refundReply: order.refundReply || '',
+        refundAmount: order.refundAmount != null ? Number(order.refundAmount).toFixed(2) : '',
+        refundApplyTime: order.refundApplyTime
+          ? new Date(order.refundApplyTime).toLocaleString('zh-CN') : '',
+        refundTime: order.refundTime
+          ? new Date(order.refundTime).toLocaleString('zh-CN') : '',
         date: new Date(order.createdAt).toLocaleString('zh-CN')
       }))
 
@@ -1206,7 +1507,9 @@ async function deleteProduct(item) {
     alert('删除成功！')
   } catch (error) {
     console.error('删除失败:', error)
-    alert('删除失败，请稍后重试')
+    // 后端会给出具体原因（例如「该商品还有进行中的订单，暂时不能删除」），
+    // 直接透传，别让用户只看到一句没头没脑的「请稍后重试」
+    alert(error?.response?.message || '删除失败，请稍后重试')
   }
 }
 
@@ -1299,6 +1602,104 @@ async function cancelOrderItem(order) {
       console.error('取消订单失败:', error)
       alert('取消订单失败，请稍后重试')
     }
+  }
+}
+
+/** 从 request 包装后的异常里取后端业务提示 */
+function errorMessage(error) {
+  return error?.cause?.response?.message || error?.cause?.message
+    || error?.response?.message || error?.message || '操作失败，请稍后重试'
+}
+
+/** 买家申请退款：仅待发货/待收货，原因必填 */
+async function applyRefundItem(order) {
+  try {
+    const { value } = await ElMessageBox.prompt('请填写退款原因（100 字以内）', '申请退款', {
+      confirmButtonText: '提交申请',
+      cancelButtonText: '再想想',
+      inputType: 'textarea',
+      inputPlaceholder: '例如：商品与描述不符 / 临时不需要了',
+      inputValidator: (v) => (v && v.trim() ? true : '退款原因不能为空')
+    })
+    const res = await applyRefund(order.id, value.trim())
+    if (res.code === 200) {
+      ElMessage.success(res.message || '退款申请已提交')
+      await loadOrders()
+    } else {
+      ElMessage.error(res.message || '申请失败')
+    }
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(errorMessage(e))
+  }
+}
+
+/** 买家撤销退款申请 */
+async function cancelRefundItem(order) {
+  try {
+    await ElMessageBox.confirm('撤销后订单会回到申请前的状态，确定撤销吗？', '撤销退款申请', {
+      confirmButtonText: '确定撤销',
+      cancelButtonText: '再想想',
+      type: 'warning'
+    })
+    const res = await cancelRefundRequest(order.id)
+    if (res.code === 200) {
+      ElMessage.success(res.message || '已撤销退款申请')
+      await loadOrders()
+    } else {
+      ElMessage.error(res.message || '撤销失败')
+    }
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(errorMessage(e))
+  }
+}
+
+/** 卖家同意退款：商品恢复在售，余额支付原路退回买家余额 */
+async function approveRefundItem(order) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '同意后商品会恢复在售；余额支付的订单将原路退回买家余额。',
+      '同意退款',
+      {
+        confirmButtonText: '同意退款',
+        cancelButtonText: '取消',
+        inputPlaceholder: '给买家的说明（选填）'
+      }
+    )
+    const res = await approveRefund(order.id, (value || '').trim())
+    if (res.code === 200) {
+      ElMessage.success(res.message || '已同意退款')
+      await loadOrders()
+    } else {
+      ElMessage.error(res.message || '操作失败')
+    }
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(errorMessage(e))
+  }
+}
+
+/** 卖家拒绝退款：订单回到申请前状态 */
+async function rejectRefundItem(order) {
+  try {
+    const { value } = await ElMessageBox.prompt('请填写拒绝原因，便于买家了解处理结果', '拒绝退款', {
+      confirmButtonText: '确认拒绝',
+      cancelButtonText: '取消',
+      inputType: 'textarea',
+      inputPlaceholder: '例如：商品已发出，请收到后确认',
+      inputValidator: (v) => (v && v.trim() ? true : '拒绝原因不能为空')
+    })
+    const res = await rejectRefund(order.id, value.trim())
+    if (res.code === 200) {
+      ElMessage.success(res.message || '已拒绝退款申请')
+      await loadOrders()
+    } else {
+      ElMessage.error(res.message || '操作失败')
+    }
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(errorMessage(e))
   }
 }
 
@@ -1463,6 +1864,7 @@ async function saveProfile() {
 
 onMounted(() => {
   loadAllData()
+  loadScreenshotStatus()
 })
 </script>
 
@@ -2103,6 +2505,24 @@ onMounted(() => {
 .order-meta {
   font-size: 13px;
   color: rgba(255, 255, 255, 0.6);
+}
+
+.order-refund {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.order-refund p {
+  margin: 0;
+}
+
+.order-refund span {
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .order-price-section {
@@ -2937,6 +3357,53 @@ onMounted(() => {
 .verify-done__meta { font-size: var(--text-sm); color: var(--text-2); }
 .verify-done__meta strong { color: var(--text); font-family: var(--font-mono, monospace); }
 .verify-done__name { color: var(--text-3); }
+
+/* ---- 支付宝学生认证截图辅助认证 ---- */
+.verify-shot-card { margin-top: var(--space-4); }
+.verify-shot-notice {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  border-radius: var(--radius, 8px);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-2, #666);
+  line-height: 1.7;
+}
+.verify-shot-notice__title { font-weight: var(--weight-semibold, 600); color: var(--text, #333); }
+.verify-shot-status {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius, 8px);
+  font-size: var(--text-sm, 13px);
+  line-height: 1.7;
+}
+.verify-shot-status.is-pending { background: var(--warning-soft, rgba(251, 191, 36, 0.12)); color: var(--warning, #b45309); }
+.verify-shot-status.is-rejected { background: var(--danger-soft, rgba(239, 68, 68, 0.1)); color: var(--danger, #dc2626); }
+.verify-shot-status.is-expired { background: var(--surface-3, rgba(0, 0, 0, 0.06)); color: var(--text-2, #666); }
+.verify-shot-status__title { font-weight: var(--weight-semibold, 600); }
+.verify-shot-status__meta { font-size: var(--text-xs, 12px); opacity: 0.9; }
+.verify-shot-field-hint { margin: var(--space-1) 0 0; font-size: var(--text-xs, 12px); color: var(--text-3, #999); }
+.verify-shot-preview {
+  margin-top: var(--space-2);
+  max-width: 280px;
+  max-height: 200px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  border-radius: var(--radius, 8px);
+  object-fit: contain;
+}
+.verify-shot-agree {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  font-size: var(--text-xs, 12px);
+  color: var(--text-2, #666);
+  line-height: 1.7;
+  cursor: pointer;
+}
+.verify-shot-agree input { margin-top: 3px; accent-color: var(--accent, #10b981); }
+.input-file { padding: var(--space-2); }
 
 /* ---- 订单评价对话框 ---- */
 .review-mask { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: var(--space-4); background: rgba(0, 0, 0, 0.45); }

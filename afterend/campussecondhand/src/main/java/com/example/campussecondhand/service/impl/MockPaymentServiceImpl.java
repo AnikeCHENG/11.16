@@ -35,10 +35,26 @@ public class MockPaymentServiceImpl implements PaymentService {
 
     @Override
     public PayResult pay(Order order, String payMethod) {
-        String tradeNo = generateTradeNo();
+        // 复用调用方预先生成的幂等键（orders.transaction_id 已写入）：
+        // 同一笔订单重试时幂等键不变，渠道据此去重，不会重复扣款。
+        String tradeNo = order.getTransactionId() != null && !order.getTransactionId().isBlank()
+                ? order.getTransactionId()
+                : generateTradeNo();
         log.info("模拟支付成功: orderNo={}, payMethod={}, tradeNo={}",
                 order.getOrderNo(), payMethod, tradeNo);
         return PayResult.ok(tradeNo);
+    }
+
+    /**
+     * 生成幂等键。
+     *
+     * <p>由 {@code OrderService} 在调渠道<b>之前</b>取走，先写进
+     * {@code orders.transaction_id} 完成占位，再拿它去调渠道——
+     * 这样「占位失败」就不会发生扣款，「占位成功」后的重试也只会扣一次。</p>
+     */
+    @Override
+    public String generateIdempotencyKey(Order order) {
+        return generateTradeNo();
     }
 
     @Override

@@ -147,6 +147,12 @@ const routes = [
     component: () => import('../views/Admin/AdminReports.vue'),
     meta: { requiresAuth: true, requiresAdmin: true }
   },
+  {
+    path: '/admin/student-verifications',
+    name: 'AdminStudentVerifications',
+    component: () => import('../views/Admin/AdminStudentVerifications.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
 ]
 
 const router = createRouter({

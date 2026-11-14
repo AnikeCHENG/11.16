@@ -142,7 +142,10 @@ public class CartService {
                 continue;
             }
             item.put("title", product.getTitle());
-            item.put("image", product.getImages());
+            // 下发首图而不是整串：images 是逗号分隔的多图串，前端直接当 src 用会拼成
+            // "/a.jpg,/b.jpg" 导致 404 裂图。base64 Data URL 的载荷内部也含逗号，
+            // 必须用能识别它的 firstImage 截取。
+            item.put("image", OrderService.firstImage(product.getImages()));
             item.put("price", product.getPrice());
             item.put("status", product.getStatus());
             User seller = sellers.get(product.getUserId());

@@ -11,19 +11,34 @@ import java.util.Optional;
 
 @Mapper
 public interface UserRepository extends BaseMapper<User> {
-    @Select("SELECT * FROM users WHERE username = #{username}")
+    /**
+     * 按用户名查用户。
+     *
+     * <p>{@code @Select} 不会走 MyBatis-Plus 的逻辑删除插件，因此必须手写
+     * {@code deleted = 0}：否则管理员「删除」过的账号仍然能用旧 token 登录，
+     * 封禁与注销都会失效。</p>
+     */
+    @Select("SELECT * FROM users WHERE username = #{username} AND deleted = 0 LIMIT 1")
     Optional<User> findByUsername(@Param("username") String username);
 
-    /** 按学号查用户，用于认证时判断该学号是否已被占用 */
-    @Select("SELECT * FROM users WHERE student_no = #{studentNo} LIMIT 1")
+    /**
+     * 按学号查用户，用于认证时判断该学号是否已被占用。
+     *
+     * <p>同 {@link #findByUsername}：{@code @Select} 不会经过 MyBatis-Plus 的
+     * 逻辑删除插件，必须手写 {@code deleted = 0}。漏掉它会让已注销账号继续
+     * 占着学号——新用户认证时被判定为「已被占用」，而占用者其实早已不在。</p>
+     */
+    @Select("SELECT * FROM users WHERE student_no = #{studentNo} AND deleted = 0 LIMIT 1")
     User selectByStudentNo(@Param("studentNo") String studentNo);
 
     /**
      * 取出疑似明文口令的用户，供一次性迁移脚本改写为 BCrypt。
      *
-     * <p>为什么能这样筛：BCrypt 密文恒为 60 字符且以 {@code $2} 开头，
-     * 明文口令再长也凑不出这个形态；两个条件取「或」是为了同时兜住
-     * 「短口令」与「被刻意设成超长的口令」两种情况。</p>
+     * <p>为什么能这样筛：BCrypt 密文恒为 60 字符且以 {@code $2} 开头，因此
+     * 「长度过短」或「不以 {@code $2} 开头」任一成立即可判定为疑似明文。
+     * 前缀里不能再拼一个 {@code $}：BCrypt 的形态是 {@code $2a$10$…}，
+     * 写成 {@code $2$%} 会因第四位是字母而永远匹配不上，导致本条件失效、
+     * 全表用户都被当成候选。</p>
      *
      * <p>用 {@code LENGTH(...)} 而非 {@code CHAR_LENGTH(...)}：两者对 ASCII
      * 口令结果一致，但 {@code LENGTH} 走字节长度，与 BCrypt 固定 60 字节的
@@ -34,7 +49,7 @@ public interface UserRepository extends BaseMapper<User> {
         WHERE deleted = 0
           AND (password IS NULL
                OR LENGTH(password) < #{maxPlaintextLength}
-               OR password NOT LIKE CONCAT(#{bcryptPrefix}, '$%'))
+               OR password NOT LIKE CONCAT(#{bcryptPrefix}, '%'))
         """)
     List<User> findPlaintextPasswordUsers(@Param("maxPlaintextLength") int maxPlaintextLength,
                                           @Param("bcryptPrefix") String bcryptPrefix);

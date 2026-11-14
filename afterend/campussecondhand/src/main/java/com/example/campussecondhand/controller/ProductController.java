@@ -13,6 +13,8 @@ import com.example.campussecondhand.enums.ConditionLevel;
 import com.example.campussecondhand.enums.OrderStatus;
 import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.entity.User;
+import com.example.campussecondhand.exception.BadRequestException;
+import com.example.campussecondhand.exception.ForbiddenException;
 import com.example.campussecondhand.repository.OrderRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.BrowseHistoryService;
@@ -187,6 +189,9 @@ public class ProductController {
             }
             Long userId = userOpt.get().getId();
 
+            // 信用分校验不在这里——见 ProductService#create。
+            // 放在 Controller 只能挡住本接口，挡不住「广场发卖货动态」那条建商品的路径。
+
             // 成色必填：二手交易的核心信息，缺失会让买家无法判断商品价值。
             // 校验放在入库前，避免脏数据靠数据库 DEFAULT 2 兜底——那等于替卖家编造成色。
             Object rawLevel = params.get("conditionLevel");
@@ -211,13 +216,52 @@ public class ProductController {
                 return ResponseEntity.ok(ApiResponse.error(400, "瑕疵说明不能超过 255 个字符"));
             }
 
+            // 价格必填且必须是数字。此前写的是 params.get("price").toString()，
+            // price 缺失时直接 NPE、传 "abc" 时 NumberFormatException，
+            // 两者都会冒泡成毫无信息量的「服务器内部错误」。
+            // 上界由 ProductService#checkPriceRange 统一把关；这里补齐下界：
+            // 出售商品 0 元或负数没有业务含义，免费赠送应走广场 FREE 动态。
+            Object rawPrice = params.get("price");
+            if (rawPrice == null || String.valueOf(rawPrice).isBlank()) {
+                return ResponseEntity.ok(ApiResponse.error(400, "请填写商品价格"));
+            }
+            BigDecimal price;
+            try {
+                price = new BigDecimal(String.valueOf(rawPrice).trim());
+            } catch (NumberFormatException e) {
+                return ResponseEntity.ok(ApiResponse.error(400, "商品价格格式不正确"));
+            }
+            if (price.compareTo(BigDecimal.ZERO) <= 0) {
+                return ResponseEntity.ok(ApiResponse.error(400,
+                        "商品价格必须大于 0；免费赠送请发布广场动态"));
+            }
+
+            // 标题必填且长度受限：products.title 是 VARCHAR(100) NOT NULL，
+            // 超长会直接被数据库拒绝，用户只能看到毫无线索的「发布失败」
+            Object rawTitle = params.get("title");
+            String title = rawTitle == null ? null : String.valueOf(rawTitle).trim();
+            if (title == null || title.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(400, "请填写商品标题"));
+            }
+            if (title.length() > 100) {
+                return ResponseEntity.ok(ApiResponse.error(400, "商品标题不能超过 100 个字符"));
+            }
+
             Product product = new Product();
             product.setUserId(userId);
-            product.setTitle((String) params.get("title"));
+            product.setTitle(title);
             product.setDescription((String) params.get("description"));
-            product.setPrice(new BigDecimal(params.get("price").toString()));
+            product.setPrice(price);
             if (params.get("originalPrice") != null) {
-                product.setOriginalPrice(new BigDecimal(params.get("originalPrice").toString()));
+                // 同样会被 .toString() 拆穿：传 "abc" 会抛 NumberFormatException
+                String rawOriginal = String.valueOf(params.get("originalPrice")).trim();
+                if (!rawOriginal.isEmpty()) {
+                    try {
+                        product.setOriginalPrice(new BigDecimal(rawOriginal));
+                    } catch (NumberFormatException e) {
+                        return ResponseEntity.ok(ApiResponse.error(400, "原价格式不正确"));
+                    }
+                }
             }
             product.setCategory((String) params.get("category"));
             product.setConditionLevel(conditionLevel);
@@ -229,6 +273,14 @@ public class ProductController {
 
             Product created = productService.create(product);
             return ResponseEntity.ok(ApiResponse.success("发布成功", created));
+        } catch (ForbiddenException | BadRequestException e) {
+            // 必须放在下面的兜底 catch 之前，否则会被吞成
+            // 500「发布失败，请稍后重试」，用户永远看不到真正原因：
+            //  - ForbiddenException：信用分低于 60（ProductService#create 守卫）
+            //  - BadRequestException：价格超上限（ProductService#checkPriceRange）
+            // 两类都是"用户能看懂、能自己改"的失败，交给全局异常处理器
+            // 渲染成与其它接口一致的 403 / 400 响应体。
+            throw e;
         } catch (Exception e) {
             log.error("发布商品失败: userId 见请求上下文", e);
             return ResponseEntity.ok(ApiResponse.error(500, "发布失败，请稍后重试"));
@@ -287,14 +339,39 @@ public class ProductController {
                 }
             }
 
-            if (params.get("title") != null) product.setTitle((String) params.get("title"));
+            if (params.get("title") != null) {
+                // 与 create 同一口径：标题是 VARCHAR(100) NOT NULL，超长会在写库时被拒
+                String newTitle = String.valueOf(params.get("title")).trim();
+                if (newTitle.isEmpty()) {
+                    return ResponseEntity.ok(ApiResponse.error(400, "商品标题不能为空"));
+                }
+                if (newTitle.length() > 100) {
+                    return ResponseEntity.ok(ApiResponse.error(400, "商品标题不能超过 100 个字符"));
+                }
+                product.setTitle(newTitle);
+            }
             if (params.get("description") != null) product.setDescription((String) params.get("description"));
             if (newPrice != null) product.setPrice(newPrice);
-            if (params.get("originalPrice") != null) product.setOriginalPrice(new BigDecimal(params.get("originalPrice").toString()));
+            if (params.get("originalPrice") != null) {
+                // 同 create：非数字不能冒泡成 500
+                String rawOriginal = String.valueOf(params.get("originalPrice")).trim();
+                if (!rawOriginal.isEmpty()) {
+                    try {
+                        product.setOriginalPrice(new BigDecimal(rawOriginal));
+                    } catch (NumberFormatException e) {
+                        return ResponseEntity.ok(ApiResponse.error(400, "原价格式不正确"));
+                    }
+                }
+            }
 if (params.get("category") != null) product.setCategory((String) params.get("category"));
             // 成色与瑕疵同样允许编辑，但等级必须落在 0~4，避免前端传脏值写进库
             if (params.get("conditionLevel") != null) {
-                Integer level = Integer.valueOf(String.valueOf(params.get("conditionLevel")).trim());
+                Integer level;
+                try {
+                    level = Integer.valueOf(String.valueOf(params.get("conditionLevel")).trim());
+                } catch (NumberFormatException e) {
+                    return ResponseEntity.ok(ApiResponse.error(400, "商品成色格式不正确"));
+                }
                 if (!ConditionLevel.isValid(level)) {
                     return ResponseEntity.ok(ApiResponse.error(400, "商品成色取值不合法"));
                 }
@@ -351,6 +428,17 @@ if (params.get("category") != null) product.setCategory((String) params.get("cat
         if (ProductStatus.isSold(product.getStatus())) {
             return true;
         }
+        return hasActiveOrders(product);
+    }
+
+    /**
+     * 商品上是否还有「进行中」的订单。
+     *
+     * <p>口径与 {@link #isPriceLocked(Product)} 保持一致：待支付 / 待发货 / 待收货。
+     * 已完成、已取消、已退款的订单不再阻塞商品操作——卖家不应该因为历史成交
+     * 记录就永远删不掉自己挂过的商品。</p>
+     */
+    private boolean hasActiveOrders(Product product) {
         Long active = orderRepository.selectCount(new QueryWrapper<Order>()
                 .eq("product_id", product.getId())
                 .in("status", OrderStatus.PENDING_PAYMENT.getCode(),
@@ -380,6 +468,12 @@ if (params.get("category") != null) product.setCategory((String) params.get("cat
             }
             if (!product.getUserId().equals(userOpt.get().getId())) {
                 return ResponseEntity.ok(ApiResponse.error(403, "无权操作"));
+            }
+            // 还有进行中的订单时不允许删除：删掉商品后订单仍在流转，
+            // 买家侧详情、卖家侧对账都会指向一个已经不存在的商品
+            if (hasActiveOrders(product)) {
+                return ResponseEntity.ok(ApiResponse.error(400,
+                        "该商品还有进行中的订单，暂时不能删除"));
             }
 
             int deleted = productService.delete(id);

@@ -15,8 +15,11 @@ import com.example.campussecondhand.entity.Message;
 import com.example.campussecondhand.entity.Category;
 import com.example.campussecondhand.exception.BadRequestException;
 import com.example.campussecondhand.service.PenaltyService;
+import com.example.campussecondhand.service.OrderService;
 import com.example.campussecondhand.entity.Report;
+import com.example.campussecondhand.entity.StudentVerification;
 import com.example.campussecondhand.service.ReportService;
+import com.example.campussecondhand.service.StudentVerificationService;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.repository.ProductRepository;
 import com.example.campussecondhand.repository.OrderRepository;
@@ -24,9 +27,11 @@ import com.example.campussecondhand.repository.MessageRepository;
 import com.example.campussecondhand.repository.CategoryRepository;
 import com.example.campussecondhand.util.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -64,10 +69,16 @@ public class AdminController {
     private ReportService reportService;
 
     @Autowired
+    private StudentVerificationService studentVerificationService;
+
+    @Autowired
     private ProductRepository productRepository;
 
     @Autowired
     private OrderRepository orderRepository;
+
+    @Autowired
+    private OrderService orderService;
 
     @Autowired
     private MessageRepository messageRepository;
@@ -407,6 +418,14 @@ Product product = productRepository.selectById(id);
             view.put("sellerIncome", o.getSellerIncome());
             view.put("createdTime", o.getCreatedTime());
             view.put("paidTime", o.getPaidTime());
+            view.put("shippedTime", o.getShippedTime());
+            view.put("completedTime", o.getCompletedTime());
+            view.put("refundFromStatus", o.getRefundFromStatus());
+            view.put("refundReason", o.getRefundReason());
+            view.put("refundReply", o.getRefundReply());
+            view.put("refundApplyTime", o.getRefundApplyTime());
+            view.put("refundTime", o.getRefundTime());
+            view.put("refundAmount", o.getRefundAmount());
 
             User buyer = users.get(o.getBuyerId());
             User seller = users.get(o.getSellerId());
@@ -453,28 +472,85 @@ Product product = productRepository.selectById(id);
             return ResponseEntity.ok(ApiResponse.error(404, "订单不存在"));
         }
 
-        // 待支付订单不能直接标记为已完成：财务口径把 待发货/待收货/已完成 都算作
-        // 已收款（见 AdminStatsService），越过支付直接完成等于凭空造出一笔 GMV，
-        // 而 paid_time 仍为空又会让"月度服务费趋势"不认它，两个财务数字互相打架
-        if (OrderStatus.isPendingPayment(order.getStatus()) && target == OrderStatus.COMPLETED) {
-            return ResponseEntity.ok(ApiResponse.error(400, "待支付订单不能直接标记为已完成"));
-        }
         // 终态只允许保持原状，不允许被改写回中间状态（订单是对账凭证）
-        boolean terminal = OrderStatus.isCompleted(order.getStatus())
-                || OrderStatus.isCancelled(order.getStatus());
-        if (terminal && !java.util.Objects.equals(target.getCode(), order.getStatus())) {
-            return ResponseEntity.ok(ApiResponse.error(400, "已完成/已取消的订单不能再改状态"));
+        if (OrderStatus.isTerminal(order.getStatus())
+                && !java.util.Objects.equals(target.getCode(), order.getStatus())) {
+            return ResponseEntity.ok(ApiResponse.error(400, "已完成/已取消/已退款的订单不能再改状态"));
         }
 
-        order.setStatus(target.getCode());
-        if (target == OrderStatus.COMPLETED && order.getCompletedTime() == null) {
-            order.setCompletedTime(java.time.LocalDateTime.now());
+        if (java.util.Objects.equals(target.getCode(), order.getStatus())) {
+            return ResponseEntity.ok(ApiResponse.success("状态未变化",
+                    toAdminOrderViews(List.of(order)).get(0)));
         }
-        order.setUpdatedTime(java.time.LocalDateTime.now());
-        orderRepository.updateById(order);
 
-        return ResponseEntity.ok(ApiResponse.success("更新成功",
-                toAdminOrderViews(List.of(order)).get(0)));
+        // 状态推进必须走领域服务：只改 status 会留下「商品还锁着」「卖家没收到钱」
+        // 这类账实不符的中间态。这里只保留两个管理端确有需要的应急处置。
+        try {
+            if (target == OrderStatus.CANCELLED) {
+                if (!OrderStatus.isPendingPayment(order.getStatus())) {
+                    return ResponseEntity.ok(ApiResponse.error(400,
+                            "已支付订单不能直接取消，请使用退款接口"));
+                }
+                Order cancelled = orderService.adminCancelUnpaid(id);
+                return ResponseEntity.ok(ApiResponse.success("订单已取消，商品已恢复在售",
+                        toAdminOrderViews(List.of(cancelled)).get(0)));
+            }
+            if (target == OrderStatus.COMPLETED) {
+                if (OrderStatus.isPendingPayment(order.getStatus())) {
+                    return ResponseEntity.ok(ApiResponse.error(400,
+                            "待支付订单不能直接标记为已完成"));
+                }
+                if (OrderStatus.fromCode(order.getStatus()) != OrderStatus.PENDING_RECEIPT) {
+                    return ResponseEntity.ok(ApiResponse.error(400,
+                            "仅待收货订单可以标记为已完成"));
+                }
+                Order completed = orderService.adminComplete(id);
+                return ResponseEntity.ok(ApiResponse.success("订单已完成，卖家已入账",
+                        toAdminOrderViews(List.of(completed)).get(0)));
+            }
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "该状态不支持手动修改；退款请使用退款接口"));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /**
+     * 管理员退款：已支付未确认收货(1/2) 直接退，或同意买家已提交的退款申请(5)。
+     *
+     * <p>与用户端卖家同意退款共用 {@link OrderService#adminRefund}，
+     * 商品恢复在售与状态推进在同一事务内完成。</p>
+     */
+    @PostMapping("/orders/{id}/refund")
+    public ResponseEntity<ApiResponse<?>> refundOrder(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body) {
+        try {
+            String reason = body == null ? null : body.get("reason");
+            String reply = body == null ? null : body.get("reply");
+            Order refunded = orderService.adminRefund(id, reason, reply);
+            return ResponseEntity.ok(ApiResponse.success("退款成功，商品已恢复在售",
+                    toAdminOrderViews(List.of(refunded)).get(0)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /** 管理员驳回退款申请：5 → 申请前状态 */
+    @PostMapping("/orders/{id}/refund/reject")
+    public ResponseEntity<ApiResponse<?>> rejectRefund(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body) {
+        try {
+            String reply = body == null ? null : body.get("reply");
+            Order back = orderService.adminRejectRefund(id, reply);
+            return ResponseEntity.ok(ApiResponse.success("已驳回退款申请",
+                    toAdminOrderViews(List.of(back)).get(0)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
     }
 
     // 删除订单
@@ -489,9 +565,15 @@ Product product = productRepository.selectById(id);
         // 与用户端 DELETE /api/orders/{id} 同一口径：orderRepository 是物理删除
         // （orders 实体没有逻辑删除字段），删掉一笔进行中的订单等于抹掉交易凭证，
         // 商品已锁定、钱已收，却再也查不到这笔单子，财务统计也被改写
-        if (!OrderStatus.isCompleted(order.getStatus())
-                && !OrderStatus.isCancelled(order.getStatus())) {
-            return ResponseEntity.ok(ApiResponse.error(400, "仅已完成或已取消的订单可以删除"));
+        if (!OrderStatus.isTerminal(order.getStatus())) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "仅已完成、已取消或已退款的订单可以删除"));
+        }
+        // 已有资金流水的订单同样不能删：account_flow / payment_record 通过
+        // order_id 关联订单且无级联，删掉订单只会留下「有流水无订单」的孤儿记录
+        if (!orderService.canDelete(order)) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "该订单已有资金流水，不能删除"));
         }
 
         orderRepository.deleteById(id);
@@ -722,6 +804,94 @@ return ResponseEntity.ok(ApiResponse.success("获取成功", adminStatsService.c
             result.put("status", report.getStatus());
             result.put("adminRemark", report.getAdminRemark());
             return ResponseEntity.ok(ApiResponse.success("处理完成", result));
+        } catch (BadRequestException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    // ==================== 学生认证审核（支付宝截图辅助认证） ====================
+
+    /**
+     * 学生认证申请列表（支付宝截图辅助认证），物理分页。
+     *
+     * <p>列表按合规要求脱敏（姓名只留姓氏、学号打码）；完整信息走
+     * {@link #getStudentVerificationDetail}。本路径在 /api/admin/** 下，
+     * 鉴权由 AdminAuthInterceptor 保证。</p>
+     */
+    @GetMapping("/student-verifications")
+    public ResponseEntity<ApiResponse<?>> getStudentVerifications(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        try {
+            PageParam paging = PageParam.of(page, size);
+            PageResult<Map<String, Object>> result =
+                    studentVerificationService.pageForAdmin(paging, status, search);
+            return ResponseEntity.ok(ApiResponse.success("获取成功", result));
+        } catch (BadRequestException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /**
+     * 申请详情：完整姓名与学号（管理员比对截图用）。
+     */
+    @GetMapping("/student-verifications/{id}")
+    public ResponseEntity<ApiResponse<?>> getStudentVerificationDetail(
+            @PathVariable Long id) {
+        try {
+            Map<String, Object> detail = studentVerificationService.detailForAdmin(id);
+            return ResponseEntity.ok(ApiResponse.success("获取成功", detail));
+        } catch (BadRequestException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /**
+     * 读取申请的认证截图。
+     *
+     * <p>截图存放在私有目录，没有对外 URL，只能经本接口按申请记录取；
+     * 路径在 /api/admin/** 下，由 {@code AdminAuthInterceptor} 校验管理员身份。</p>
+     */
+    @GetMapping("/student-verifications/{id}/proof")
+    public ResponseEntity<byte[]> getStudentVerificationProof(@PathVariable Long id) {
+        try {
+            StudentVerificationService.ProofFile proof = studentVerificationService.proof(id);
+            MediaType mediaType = proof.fileName() != null && proof.fileName().endsWith(".png")
+                    ? MediaType.IMAGE_PNG
+                    : MediaType.IMAGE_JPEG;
+            return ResponseEntity.ok()
+                    .contentType(mediaType)
+                    .body(proof.bytes());
+        } catch (BadRequestException e) {
+            return ResponseEntity.badRequest().body(e.getMessage().getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * 审核学生认证截图申请。action: approve / reject；
+     * reject 时 reason（拒绝理由）必填，理由会展示给申请人并允许其重新提交。
+     *
+     * <p>通过后用户获得学生认证权限（is_student_verified = 1），与既有
+     * 学号认证产物同构；若用户已有既有认证则保持原状不降级。</p>
+     */
+    @PutMapping("/student-verifications/{id}/review")
+    public ResponseEntity<ApiResponse<?>> reviewStudentVerification(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        try {
+            String action = body.get("action") == null ? null : String.valueOf(body.get("action"));
+            String reason = body.get("reason") == null ? null : String.valueOf(body.get("reason"));
+            StudentVerification record = studentVerificationService.review(
+                    id, action, reason, currentUserId(authHeader), operatorOf(authHeader));
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("id", record.getId());
+            result.put("status", record.getStatus());
+            result.put("reviewedAt", record.getReviewedAt());
+            return ResponseEntity.ok(ApiResponse.success("审核完成", result));
         } catch (BadRequestException e) {
             return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
         }

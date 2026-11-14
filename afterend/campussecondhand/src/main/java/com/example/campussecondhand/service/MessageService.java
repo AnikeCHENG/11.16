@@ -167,22 +167,28 @@ map.put("otherUserId", otherId);
         return message;
     }
 
-    public boolean markAsRead(Long id) {
-        Message message = messageRepository.selectById(id);
-        if (message != null) {
-            message.setIsRead(1);
-            messageRepository.updateById(message);
-            return true;
+    /**
+     * 把「我收到的」一条消息标记为已读。
+     *
+     * <p>userId 不是可选项：消息 id 是自增的，只按 id 更新等于把
+     * 「标记已读」开放给所有登录用户，别人可以把你的未读消息清空。
+     * 把接收人写进 UPDATE 的 WHERE 后，越权请求影响 0 行。</p>
+     *
+     * @return true 表示确实更新了属于该用户的消息
+     */
+    public boolean markAsRead(Long id, Long userId) {
+        if (id == null || userId == null) {
+            return false;
         }
-        return false;
+        return messageRepository.markAsRead(id, userId) > 0;
     }
 
     public boolean markAllAsRead(Long userId) {
-        List<Message> messages = messageRepository.findByReceiverId(userId);
-        messages.forEach(m -> {
-            m.setIsRead(1);
-            messageRepository.updateById(m);
-        });
+        if (userId == null) {
+            return false;
+        }
+        // 单条 UPDATE 完成，避免「查出全部消息再逐条全字段更新」的 N+1 写入
+        messageRepository.markAllAsRead(userId);
         return true;
     }
 

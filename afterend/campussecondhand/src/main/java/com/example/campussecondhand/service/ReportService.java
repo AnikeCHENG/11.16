@@ -7,6 +7,7 @@ import com.example.campussecondhand.common.PageResult;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.entity.Report;
 import com.example.campussecondhand.entity.User;
+import com.example.campussecondhand.enums.CreditEvent;
 import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.enums.ReportAction;
 import com.example.campussecondhand.enums.ReportStatus;
@@ -68,6 +69,23 @@ public class ReportService {
         this.productRepository = productRepository;
         this.userRepository = userRepository;
         this.penaltyService = penaltyService;
+    }
+
+    /**
+     * 信用分服务：可选注入，走 setter 以保持既有
+     * {@code new ReportService(...)} 测试写法不变。
+     */
+    private CreditService creditService;
+
+    @Autowired(required = false)
+    void setCreditService(CreditService creditService) {
+        this.creditService = creditService;
+    }
+
+    private void recordCredit(Long userId, CreditEvent event, Long bizId, String remark) {
+        if (creditService != null) {
+            creditService.record(userId, event, bizId, remark);
+        }
     }
 
     // ==================== C 端提交 ====================
@@ -315,6 +333,10 @@ public class ReportService {
             throw new BadRequestException("不能封禁管理员账号");
         }
         penaltyService.updateUserStatus(target.getId(), 0, "举报处理");
+        // 举报成立 -15。biz_id 用举报ID：同一次举报只扣一次，
+        // 与"该举报已处理"的状态守卫形成双重保险
+        recordCredit(target.getId(), CreditEvent.REPORT_UPHELD, report.getId(),
+                "被举报并被封禁，举报#" + report.getId());
     }
 
     private void applyDeleteProduct(Report report) {
@@ -328,6 +350,10 @@ public class ReportService {
         }
         penaltyService.updateProductStatus(product.getId(),
                 ProductStatus.OFF_SHELF.getCode(), "举报处理");
+        // 商品被下架同样算举报成立，扣商品所有者。biz_id 用举报ID：
+        // 与封号事件同键但 user 不同，互不冲突
+        recordCredit(product.getUserId(), CreditEvent.REPORT_UPHELD, report.getId(),
+                "商品被举报下架，举报#" + report.getId());
     }
 
     private String buildRemark(ReportAction action, ReportTargetType type,

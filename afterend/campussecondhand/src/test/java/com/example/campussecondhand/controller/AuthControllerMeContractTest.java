@@ -159,4 +159,24 @@ class AuthControllerMeContractTest {
         assertThat(resp.getBody()).isNotNull();
         assertThat(resp.getBody().getCode()).isEqualTo(401);
     }
+
+    @Test
+    @DisplayName("登录：status 为 null 的历史账号不应抛 NPE，按正常账号处理")
+    void loginTreatsNullStatusAsActive() {
+        User legacy = new User();
+        legacy.setId(2L);
+        legacy.setUsername("legacy");
+        legacy.setPassword("$2a$10$hash");
+        legacy.setRole(0);
+        legacy.setStatus(null);
+        when(userService.findByUsername("legacy")).thenReturn(Optional.of(legacy));
+        when(passwordEncoder.matches("pw", "$2a$10$hash")).thenReturn(true);
+        when(jwtUtil.generateToken("legacy", 0)).thenReturn("new-token");
+
+        var resp = controller.login(Map.of("username", "legacy", "password", "pw"));
+
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getCode()).isEqualTo(200);
+        assertThat(dataOf(resp)).containsKey("token");
+    }
 }

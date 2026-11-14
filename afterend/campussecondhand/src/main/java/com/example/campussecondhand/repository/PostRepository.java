@@ -19,6 +19,18 @@ public interface PostRepository extends BaseMapper<Post> {
     @Select("SELECT COUNT(*) FROM posts WHERE user_id = #{userId}")
     long countByUser(@Param("userId") Long userId);
 
+    /**
+     * 取出最近若干条动态的标签原文，用于统计热门话题。
+     *
+     * <p>标签在库里是逗号分隔的一整串（{@code Post#splitToList} 负责拆开），
+     * 这里只取原文，拆分与计数交给 Service 做。</p>
+     *
+     * @param limit 扫描条数
+     * @return 标签原文列表，可能包含 null 与空串（由调用方过滤）
+     */
+    @Select("SELECT tags FROM posts WHERE tags IS NOT NULL AND tags <> '' ORDER BY created_time DESC LIMIT #{limit}")
+    List<String> findRecentTags(@Param("limit") int limit);
+
     /** 某用户指定类型的动态数（hall-profile 的 stats.seeking 只用 SEEK） */
     @Select("SELECT COUNT(*) FROM posts WHERE user_id = #{userId} AND type = #{type}")
     long countByUserAndType(@Param("userId") Long userId, @Param("type") String type);

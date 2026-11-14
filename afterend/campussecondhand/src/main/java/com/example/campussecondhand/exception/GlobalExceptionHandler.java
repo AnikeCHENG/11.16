@@ -75,6 +75,22 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 被业务规则禁止的操作，例如信用分低于 60 的用户发布商品。
+     *
+     * <p><b>刻意返回 HTTP 200 + body.code=403</b>，而不是 HTTP 403：
+     * 本项目所有业务型 403（共 13 处 Controller）都写成
+     * {@code ResponseEntity.ok(ApiResponse.error(403, ...))}，前端
+     * （{@code api/*.js}）也一律先解析 JSON 再判断 {@code body.code}。
+     * 这里若改用真实 HTTP 403，反而会与既有约定不一致，
+     * 且让所有把 HTTP 200 视为"请求已送达"的调用方多出分支。</p>
+     */
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ApiResponse<?>> handleForbidden(ForbiddenException e) {
+        log.warn("操作被拒绝: {}", e.getMessage());
+        return ResponseEntity.ok(ApiResponse.error(403, e.getMessage()));
+    }
+
+    /**
      * 路径变量/查询参数类型不匹配，例如把 "abc" 传给 {@code Long id}。
      *
      * <p>同样是客户端错误，不应返回 500。</p>

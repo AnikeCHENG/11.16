@@ -1,10 +1,12 @@
 package com.example.campussecondhand.service;
 
 import com.example.campussecondhand.entity.User;
+import com.example.campussecondhand.enums.CreditEvent;
 import com.example.campussecondhand.exception.BadRequestException;
 import com.example.campussecondhand.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,8 +43,25 @@ public class StudentVerifyService {
 
     private final UserRepository userRepository;
 
+    /**
+     * 信用分服务：可选注入，走 setter 以保持既有
+     * {@code new StudentVerifyService(userRepo)} 测试写法不变。
+     */
+    private CreditService creditService;
+
+    @Autowired(required = false)
+    void setCreditService(CreditService creditService) {
+        this.creditService = creditService;
+    }
+
     public StudentVerifyService(UserRepository userRepository) {
         this.userRepository = userRepository;
+    }
+
+    private void recordCredit(Long userId, CreditEvent event, Long bizId, String remark) {
+        if (creditService != null) {
+            creditService.record(userId, event, bizId, remark);
+        }
     }
 
     /**
@@ -99,6 +118,9 @@ public class StudentVerifyService {
             // 并发下两人同时提交同一学号：唯一索引是最后一道防线
             throw new BadRequestException("该学号已被其他账号认证");
         }
+        // 认证成功 +10。biz_id 用 userId：一个账号只能认证一次，天然幂等
+        recordCredit(userId, CreditEvent.STUDENT_VERIFIED, userId, "完成学生认证");
+
         log.info("用户 {} 完成学生认证（模拟校验）", user.getUsername());
         return user;
     }

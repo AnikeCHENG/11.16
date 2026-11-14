@@ -1,17 +1,22 @@
 package com.example.campussecondhand.controller;
 
 import com.example.campussecondhand.common.ApiResponse;
+import com.example.campussecondhand.entity.StudentVerification;
 import com.example.campussecondhand.entity.User;
 import com.example.campussecondhand.exception.BadRequestException;
 import com.example.campussecondhand.service.ReviewService;
 import com.example.campussecondhand.service.PostService;
 import com.example.campussecondhand.service.StudentVerifyService;
+import com.example.campussecondhand.service.StudentVerificationService;
+import com.example.campussecondhand.service.UploadService;
 import java.util.LinkedHashMap;
+import com.example.campussecondhand.repository.AccountRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.util.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,12 +55,22 @@ public class UserController {
     private StudentVerifyService studentVerifyService;
 
     @Autowired
+    private StudentVerificationService studentVerificationService;
+
+    @Autowired
+    private UploadService uploadService;
+
+    @Autowired
     private ReviewService reviewService;
 
     private static final Logger log = LoggerFactory.getLogger(UserController.class);
 
     @Autowired
     private PostService postService;
+
+    /** 余额走原生 SQL（users.balance 不在 User 实体里），仅本人资料接口读取 */
+    @Autowired
+    private AccountRepository accountRepository;
 
     /**
      * 大厅左侧用户名片：昵称 / 头像 / 认证 / 年级 / 三条统计，一次接口返回。
@@ -154,6 +169,9 @@ public class UserController {
             // 于是认证成功后一刷新页面，徽章消失、认证表单重新出现，
             // 再提交就撞上后端「已通过学生认证」的 400。
             profile.put("studentVerified", user.isStudentVerifiedUser());
+            // 余额是本人可见的资金数据：收银台据此展示「余额支付」可用额度
+            java.math.BigDecimal balance = accountRepository.balanceOf(user.getId());
+            profile.put("balance", balance != null ? balance : java.math.BigDecimal.ZERO);
             return ResponseEntity.ok(ApiResponse.success("获取成功", profile));
         } catch (Exception e) {
             log.error("获取用户资料失败: ", e);
@@ -181,11 +199,22 @@ public class UserController {
                 if (username.length() < 2 || username.length() > 20) {
                     return ResponseEntity.ok(ApiResponse.error(400, "用户名需要在2-20个字符之间"));
                 }
-                user.setUsername(username);
+                // 用户名同时是登录凭证与 JWT 的 subject，改名会让现有 token 立即失效；
+                // 更严重的是旧用户名被他人注册后，旧 token 会被解析成新用户。
+                // 在 JWT 改为携带不可变 userId 之前，这里明确拒绝改名，而不是留下串号风险。
+                if (!username.equals(user.getUsername())) {
+                    return ResponseEntity.ok(ApiResponse.error(400, "用户名是登录凭证，暂不支持修改"));
+                }
             }
 
             if (profileData.containsKey("avatar")) {
-                user.setAvatar(profileData.get("avatar"));
+                // users.avatar 是 MEDIUMTEXT（Base64 Data URL），不限制长度等于
+                // 让任意大的字符串进库；上传接口本身限制在 10MB 以内，这里再兜一层
+                String avatar = profileData.get("avatar");
+                if (avatar != null && avatar.length() > 2_000_000) {
+                    return ResponseEntity.ok(ApiResponse.error(400, "头像数据过大，请重新上传"));
+                }
+                user.setAvatar(avatar);
             }
 
             if (profileData.containsKey("bio")) {
@@ -274,6 +303,129 @@ public class UserController {
     }
 
     /**
+     * 提交「支付宝学生认证截图」辅助认证申请（进入待审核状态，由管理员人工审核）。
+     *
+     * <p>仅面向无法完成既有学生认证的用户。平台只收集支付宝官方"学生认证"
+     * 结果截图与基本学籍信息，<b>不收集</b>支付宝账号、密码、支付密码、
+     * 短信验证码或完整身份证号；截图中可对敏感信息打码。</p>
+     *
+     * <p>截图先经 {@code POST /api/upload/image} 落盘（魔术字节嗅探 + UUID 重命名），
+     * 本接口只接收返回的 {@code /uploads/...} 路径。</p>
+     */
+    @PostMapping("/student-verification/screenshot")
+    public ResponseEntity<ApiResponse<?>> submitScreenshotVerification(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody Map<String, Object> body) {
+        try {
+            Optional<User> userOpt = getUserFromToken(authHeader);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+            }
+            boolean agreed = Boolean.TRUE.equals(body.get("agree"));
+            if (!agreed) {
+                return ResponseEntity.ok(ApiResponse.error(400,
+                        "请先勾选同意《信息使用说明》：所提交资料仅用于本平台学生身份审核"));
+            }
+            StudentVerification record = studentVerificationService.submit(
+                    userOpt.get().getId(),
+                    str(body.get("realName")),
+                    str(body.get("school")),
+                    str(body.get("studentNo")),
+                    str(body.get("enrollmentYear")),
+                    str(body.get("department")),
+                    str(body.get("proofImage")),
+                    str(body.get("remark")));
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("id", record.getId());
+            result.put("status", record.getStatus());
+            result.put("createdAt", record.getCreatedAt());
+            return ResponseEntity.ok(ApiResponse.success("已提交，等待管理员审核", result));
+        } catch (BadRequestException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        } catch (Exception e) {
+            log.error("提交支付宝学生认证截图认证失败: ", e);
+            return ResponseEntity.ok(ApiResponse.error(500, "提交失败，请稍后重试"));
+        }
+    }
+
+    /**
+     * 上传认证截图到<b>私有目录</b>，返回不透明的文件名标识。
+     *
+     * <p>截图不落公开的 {@code /uploads/**} 目录：那里有静态资源映射，
+     * 任何拿到 URL 的人都能直接打开。认证截图只有审核人员能看，
+     * 因此它经带鉴权的接口按申请记录读取。</p>
+     *
+     * <p>校验格式/大小/文件头在 {@link UploadService#storePrivateImage} 里，
+     * 这里只负责鉴权与错误响应。</p>
+     */
+    @PostMapping("/student-verification/proof")
+    public ResponseEntity<ApiResponse<?>> uploadScreenshotProof(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestParam("file") MultipartFile file) {
+        try {
+            Optional<User> userOpt = getUserFromToken(authHeader);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+            }
+            String proofId = uploadService.storePrivateImage(file);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("proofId", proofId);
+            return ResponseEntity.ok(ApiResponse.success("上传成功", result));
+        } catch (BadRequestException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        } catch (Exception e) {
+            log.error("认证截图上传失败: ", e);
+            return ResponseEntity.ok(ApiResponse.error(500, "图片上传失败，请稍后重试"));
+        }
+    }
+
+    /**
+     * 查询我的支付宝截图辅助认证进度（最新一条申请）。
+     *
+     * <p>返回 {@code data = null} 表示从未提交过。拒绝时带 {@code rejectReason}，
+     * 前端据此展示原因并允许重新提交。本人查询，姓名与学号不脱敏。</p>
+     */
+    @GetMapping("/student-verification")
+    public ResponseEntity<ApiResponse<?>> myScreenshotVerification(
+            @RequestHeader("Authorization") String authHeader) {
+        try {
+            Optional<User> userOpt = getUserFromToken(authHeader);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+            }
+            StudentVerification record = studentVerificationService.latestOf(userOpt.get().getId());
+            if (record == null) {
+                return ResponseEntity.ok(ApiResponse.success("获取成功", null));
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("id", record.getId());
+            result.put("method", record.getMethod());
+            result.put("realName", record.getRealName());
+            result.put("school", record.getSchool());
+            result.put("studentNo", record.getStudentNo());
+            result.put("enrollmentYear", record.getEnrollmentYear());
+            result.put("department", record.getDepartment());
+            result.put("proofImage", record.getProofImage());
+            result.put("remark", record.getRemark());
+            result.put("status", record.getStatus());
+            result.put("rejectReason", record.getRejectReason());
+            result.put("createdAt", record.getCreatedAt());
+            result.put("reviewedAt", record.getReviewedAt());
+            result.put("expiresAt", record.getExpiresAt());
+            return ResponseEntity.ok(ApiResponse.success("获取成功", result));
+        } catch (Exception e) {
+            log.error("查询认证进度失败: ", e);
+            return ResponseEntity.ok(ApiResponse.error(500, "获取失败"));
+        }
+    }
+
+    /** Map 值安全转字符串：null 与不存在键统一返回 null */
+    private static String str(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    /**
      * 卖家的评价统计：好评率、平均星级、评价总数。
      *
      * <p>全部由 SQL 聚合实时计算，不存冗余字段——冗余的统计值需要处理
@@ -291,6 +443,25 @@ public class UserController {
         }
     }
 
+    /**
+     * 卖家收到的文字评价（默认最近 5 条）。
+     *
+     * <p>与 review-stats 同为公开数据：商品详情页要让买家看到"别人怎么说"，
+     * 而不是只有一个好评率数字。limit 由服务层收敛到 1~20。</p>
+     */
+    @GetMapping("/user/{id}/reviews")
+    public ResponseEntity<ApiResponse<?>> getSellerReviews(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "5") Integer limit) {
+        try {
+            return ResponseEntity.ok(ApiResponse.success("获取成功",
+                    reviewService.listForSeller(id, limit)));
+        } catch (Exception e) {
+            log.error("获取卖家评价列表失败: ", e);
+            return ResponseEntity.ok(ApiResponse.error(500, "获取失败"));
+        }
+    }
+
     @GetMapping("/user/{id}")
     public ResponseEntity<ApiResponse<?>> getUserById(@PathVariable Long id) {
         try {
@@ -299,11 +470,13 @@ public class UserController {
                 return ResponseEntity.ok(ApiResponse.error(404, "用户不存在"));
             }
 
+            // 公开资料白名单：只返回展示所需的字段。
+            // email / phone 属于联系方式，不能因为「按 id 查详情」就无条件下发——
+            // 本接口无需登录，按自增 id 遍历即可批量收集全站邮箱与手机号。
+            // 本人资料走 /profile，管理端走 /api/admin/users/{id}。
             return ResponseEntity.ok(ApiResponse.success("获取成功", Map.of(
                     "id", user.getId(),
                     "username", user.getUsername(),
-                    "email", user.getEmail(),
-                    "phone", user.getPhone() != null ? user.getPhone() : "",
                     "avatar", user.getAvatar() != null ? user.getAvatar() : "",
                     "bio", user.getBio() != null ? user.getBio() : "",
                     "location", user.getLocation() != null ? user.getLocation() : "",

@@ -153,6 +153,23 @@ class UnauthenticatedWriteEndpointTest {
     }
 
     @Test
+    @DisplayName("分类 C 端只读：写操作必须走 /api/admin/categories")
+    void categoryControllerIsReadOnly() {
+        List<String> writes = new ArrayList<>();
+        for (Method m : CategoryController.class.getDeclaredMethods()) {
+            if (isWriteMapping(m)) {
+                writes.add(m.getName());
+            }
+        }
+        assertThat(writes)
+                .as("""
+                     /api/categories 曾对任意登录用户开放新增/修改/删除，等同于越权改全站分类。
+                     分类写操作只能走 /api/admin/categories，由 AdminAuthInterceptor 校验管理员。
+                     如确需恢复 C 端写接口，请先补角色校验并更新本测试。""")
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("白名单里的路径确实都存在——防止白名单写成过期条目而无人察觉")
     void allowlistEntriesStillExist() {
         List<String> allPaths = new ArrayList<>();

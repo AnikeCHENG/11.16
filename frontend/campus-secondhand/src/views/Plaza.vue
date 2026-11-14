@@ -100,6 +100,7 @@
                 v-model="draft.productPrice"
                 type="number"
                 min="0"
+                max="99999999.99"
                 step="0.01"
                 :placeholder="draft.type === 'FREE' ? '免费送可留空' : '必填'"
               />

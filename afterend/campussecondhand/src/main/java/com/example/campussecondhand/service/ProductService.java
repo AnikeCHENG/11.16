@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.example.campussecondhand.common.PageParam;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.enums.ProductStatus;
+import com.example.campussecondhand.exception.BadRequestException;
+import com.example.campussecondhand.exception.ForbiddenException;
 import com.example.campussecondhand.repository.ProductRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +23,17 @@ import java.util.Optional;
 @Service
 public class ProductService {
 
+    /**
+     * 价格上限：{@code products.price} 的列类型是 {@code decimal(10,2)}，
+     * 因此能存的最大值是 {@code 99999999.99}。超过它 MySQL 会抛
+     * {@code MysqlDataTruncation: Out of range value for column 'price'}，
+     * 在 Controller 层表现为毫无信息量的「服务器内部错误」。
+     *
+     * <p><b>改 schema 必须同步改这里</b>：若把该列放宽成 {@code decimal(12,2)}，
+     * 本常量要一并上调，否则合法价格会被本层误拒。</p>
+     */
+    public static final BigDecimal MAX_PRICE = new BigDecimal("99999999.99");
+
     @Autowired
     private ProductRepository productRepository;
 
@@ -28,11 +41,18 @@ public class ProductService {
     private UserRepository userRepository;
 
     /**
-     * 全量在售商品。<b>仅供一次性数据迁移脚本使用</b>——见
-     * {@code ProductController#updateImages}：该端点要遍历全部商品并逐个改图或删除，
-     * 分页会漏掉不在当前页的记录，语义上必须是全量。
+     * 信用分服务。<b>必须是可选依赖</b>：单元测试用 {@code new ProductService()}
+     * 直接构造，字段为 null 时跳过信用校验（fail-open），
+     * 否则测试类要跟着改。与 {@code OrderService} 的注入方式保持一致。
+     */
+    @Autowired(required = false)
+    private CreditService creditService;
+
+    /**
+     * 全量在售商品（<b>无分页</b>）。
      *
-     * <p>面向用户的列表请改用 {@link #pageAvailable}，那是带 LIMIT 的物理分页。</p>
+     * <p><b>面向用户的列表请改用 {@link #pageAvailable}。</b>那是带 LIMIT 的物理分页；
+     * 本方法会把整张在售商品表读进内存，仅适合统计、导出这类确实需要全量的场景。</p>
      */
     public List<Product> findAllAvailable() {
         return productRepository.findByStatus(ProductStatus.ON_SALE.getCode());
@@ -106,7 +126,9 @@ public class ProductService {
     public Product findByIdWithViewCount(Long id) {
         Product product = productRepository.selectById(id);
         if (product != null) {
-            product.setViewCount(product.getViewCount() + 1);
+            // 历史数据/绕过实体默认值的写入可能让 view_count 为 null，直接 +1 会 NPE
+            Integer current = product.getViewCount();
+            product.setViewCount((current == null ? 0 : current) + 1);
             productRepository.updateById(product);
         }
         return product;
@@ -136,7 +158,24 @@ public class ProductService {
         return "other"; // 默认分类
     }
 
+    /**
+     * 新建商品。<b>这是商品落库的唯一入口</b>（{@code productRepository.insert} 仅此一处调用）。
+     *
+     * <p>信用分校验必须放在这里，不能放在 {@code ProductController}：
+     * 建商品有两条路径——「发布商品」接口与「广场发卖货/赠送动态」
+     * （{@code PostService#create} 在动态带 productInfo 时调本方法）。
+     * 校验若只写在 Controller，广场那条路就能绕过——
+     * 受限用户发一条带商品的动态即可上架，限制形同虚设。</p>
+     *
+     * <p>失败抛 {@link ForbiddenException}，由全局异常处理器渲染；
+     * 调用方（Controller 或 PostService）无需各自处理。</p>
+     */
     public Product create(Product product) {
+        if (creditService != null && product.getUserId() != null
+                && creditService.isRestricted(product.getUserId())) {
+            throw new ForbiddenException("你的信用分过低，暂时无法发布商品");
+        }
+        checkPriceRange(product.getPrice());
         product.setCreatedTime(LocalDateTime.now());
         product.setUpdatedTime(LocalDateTime.now());
         product.setViewCount(0);
@@ -153,9 +192,36 @@ public class ProductService {
     }
 
     public Product update(Product product) {
+        checkPriceRange(product.getPrice());
         product.setUpdatedTime(LocalDateTime.now());
         productRepository.updateById(product);
         return product;
+    }
+
+    /**
+     * 价格区间守卫：负数与超出 {@link #MAX_PRICE} 一律拒收。
+     *
+     * <p><b>为什么放在这里：</b>本类是唯一会给 {@code price} 写入新值的地方。
+     * 全库只有 {@code create()} 调 {@code productRepository.insert}；
+     * {@code updateById} 虽有 6 处调用，但其余 5 处（后台批量改状态、处罚、
+     * 浏览量自增、标记已售、重新上架）都是「先查出来、只改一个字段再写回」，
+     * price 原样回写、不会引入新值。所以这两个方法就是价格的收口。</p>
+     *
+     * <p><b>下界只拦负数、放行 0：</b>广场「免费赠送」按 0 元入库，
+     * 由 {@code PostService#buildProduct} 区分类型；出售商品必须 &gt; 0，
+     * 由 {@code ProductController#create} 在入口处拦住。两层口径不同，
+     * 不能在 Service 统一要求 &gt; 0，否则免费赠送会被误杀。</p>
+     *
+     * @throws BadRequestException 价格为负或超出可存储范围时抛出，
+     *         由 {@code GlobalExceptionHandler} 转成 400 + 中文提示
+     */
+    private void checkPriceRange(BigDecimal price) {
+        if (price != null && price.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BadRequestException("价格不能为负数");
+        }
+        if (price != null && price.compareTo(MAX_PRICE) > 0) {
+            throw new BadRequestException("价格超出允许范围（最高 " + MAX_PRICE.toPlainString() + "）");
+        }
     }
 
     public int delete(Long id) {

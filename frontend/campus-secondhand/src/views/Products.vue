@@ -191,7 +191,7 @@
             @mouseleave="onCardLeave"
           >
             <div class="product-image">
-              <img v-if="product.images" :src="product.images" :alt="product.title" class="product-img" />
+              <img v-if="product.images" :src="firstImage(product.images, '')" :alt="product.title" class="product-img" />
               <div v-else class="image-placeholder" :class="'ph-' + (product.category || 'other')">
                 <span class="ph-emoji" aria-hidden="true">{{ categoryEmoji(product.category) }}</span>
                 <span class="ph-label">{{ categoryLabel(product.category) }}</span>
@@ -254,6 +254,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { getProductList } from '../api/product'
+import { firstImage } from '../utils/images'
 
 const router = useRouter()
 const route = useRoute()

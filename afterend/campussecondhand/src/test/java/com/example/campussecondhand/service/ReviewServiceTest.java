@@ -14,11 +14,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -180,6 +182,27 @@ class ReviewServiceTest {
 
         assertThat((Long) stats.get("total")).isZero();
         assertThat(stats.get("goodRate")).hasToString("0.0");
+    }
+
+    @Test
+    @DisplayName("卖家评价列表：limit 缺省 5，越界收敛到 1~20")
+    void listsSellerReviewsWithBoundedLimit() {
+        when(reviewRepository.listByTargetId(SELLER_ID, 5))
+                .thenReturn(List.of(Map.of("rating", 5, "content", "很好")));
+        assertThat(service.listForSeller(SELLER_ID, null)).hasSize(1);
+
+        service.listForSeller(SELLER_ID, 999);
+        verify(reviewRepository).listByTargetId(SELLER_ID, 20);
+
+        service.listForSeller(SELLER_ID, 0);
+        verify(reviewRepository).listByTargetId(SELLER_ID, 1);
+    }
+
+    @Test
+    @DisplayName("卖家 ID 为空时评价列表直接返回空，不查库")
+    void nullSellerReturnsEmptyReviewList() {
+        assertThat(service.listForSeller(null, 5)).isEmpty();
+        verify(reviewRepository, never()).listByTargetId(any(), anyInt());
     }
 
     private Map<String, Object> row(Long total, Long good, String avg) {

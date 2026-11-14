@@ -290,6 +290,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getOrderDetail, payOrder, cancelOrderById } from '../api/order'
+import { getProfile } from '../api/user'
 
 const route = useRoute()
 const router = useRouter()
@@ -304,6 +305,8 @@ const tradeNo = ref('')
 const paymentChannel = ref('')
 const remain = ref(0)
 const method = ref('alipay')
+/** 账户余额：仅用于「余额」支付方式展示与支付前校验 */
+const balance = ref(0)
 /** 卖家已通过学生认证 ⇒ 本单服务费为 0，收银台改显免手续费文案 */
 const sellerFeeFree = computed(() => order.value?.seller?.studentVerified === true)
 const imgBroken = ref(false)
@@ -312,11 +315,12 @@ const avatarBroken = ref(false)
 let timer = null
 
 // 品牌色仅用于支付方式图标识别，不参与界面配色体系
-const methods = [
+// 余额项直接标出可用额度，避免用户点了才发现不够
+const methods = computed(() => [
   { value: 'alipay', label: '支付宝', glyph: '支', color: '#1677ff' },
   { value: 'wechat', label: '微信支付', glyph: '微', color: '#07c160' },
-  { value: 'balance', label: '余额', glyph: '¥', color: '#0b6e54' }
-]
+  { value: 'balance', label: `余额（¥${money(balance.value)}）`, glyph: '¥', color: '#0b6e54' }
+])
 
 const countdownText = computed(() => {
   const total = Math.max(remain.value, 0)
@@ -355,6 +359,16 @@ async function load() {
   }
 }
 
+/** 余额加载失败不阻断收银台：只是余额项显示 0.00，仍可选其他渠道 */
+async function loadBalance() {
+  try {
+    const res = await getProfile()
+    if (res.code === 200) balance.value = Number(res.data?.balance) || 0
+  } catch (e) {
+    console.error('加载余额失败:', e)
+  }
+}
+
 function startTimer() {
   clearInterval(timer)
   // 仅待支付订单需要倒计时
@@ -385,6 +399,11 @@ async function onTimeout() {
 async function onPay() {
   if (!method.value) {
     ElMessage.warning('请选择支付方式')
+    return
+  }
+  // 余额支付先做本地预检：后端仍会以条件 UPDATE 兜底，这里只是少跑一次失败请求
+  if (method.value === 'balance' && balance.value < Number(order.value.total ?? 0)) {
+    ElMessage.warning(`余额不足（当前 ¥${money(balance.value)}），请选择其他支付方式`)
     return
   }
   try {
@@ -439,7 +458,10 @@ async function onCancel() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadBalance()
+})
 onBeforeUnmount(() => clearInterval(timer))
 </script>
 

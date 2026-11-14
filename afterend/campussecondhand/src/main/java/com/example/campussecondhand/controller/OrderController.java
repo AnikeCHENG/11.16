@@ -19,6 +19,7 @@ import com.example.campussecondhand.repository.ProductRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.OrderFeeService;
 import com.example.campussecondhand.service.OrderService;
+import com.example.campussecondhand.service.FundService;
 import com.example.campussecondhand.service.PaymentService.PayResult;
 import com.example.campussecondhand.util.JwtUtil;
 import org.slf4j.Logger;
@@ -102,7 +103,7 @@ public class OrderController {
                         .and(q -> q.eq("buyer_id", userId).or().eq("seller_id", userId))
                         .orderByDesc("created_time", "id"));
 
-        List<Map<String, Object>> orderList = toOrderViews(paged.getRecords());
+        List<Map<String, Object>> orderList = toOrderViews(paged.getRecords(), userId);
 
         return ResponseEntity.ok(ApiResponse.success("获取成功",
                 PageResult.of(orderList, paged.getTotal(), paging)));
@@ -112,8 +113,12 @@ public class OrderController {
      * 订单列表项组装：批量取商品与卖家，字段保持与历史实现一致。
      *
      * <p>图片是 base64 Data URL，载荷内含逗号，必须用 firstImage 而非 split(",")。</p>
+     *
+     * <p>{@code isBuyer/isSeller} 由后端按当前登录用户判定：前端此前用
+     * “不是买家就是卖家”倒推角色，一旦拿不到当前用户 ID，买家也会看到
+     * 「发货」按钮。角色判断必须只有一个权威来源。</p>
      */
-    private List<Map<String, Object>> toOrderViews(List<Order> orders) {
+    private List<Map<String, Object>> toOrderViews(List<Order> orders, Long viewerId) {
         List<Long> productIds = orders.stream()
                 .map(Order::getProductId).filter(Objects::nonNull).distinct().toList();
         Map<Long, Product> products = productIds.isEmpty() ? Map.of()
@@ -134,25 +139,47 @@ public class OrderController {
             orderMap.put("orderNo", order.getOrderNo());
             orderMap.put("productId", order.getProductId());
 
+            // 商品快照优先：下单时已把标题与首图写进订单，卖家事后删改商品
+            // 不应让买家的历史订单变成“商品已删除/换了个图”。实时商品只在
+            // 快照缺失（迁移前的旧订单）时兜底，口径与 buildCashierView 一致。
             Product product = products.get(order.getProductId());
-            if (product != null) {
-                orderMap.put("productTitle", product.getTitle());
-                orderMap.put("productImage", OrderService.firstImage(product.getImages()));
-            } else {
-                orderMap.put("productTitle", "商品已删除");
-                orderMap.put("productImage", "");
+            String title = order.getOrderTitle();
+            String image = order.getOrderImage();
+            if (title == null || image == null) {
+                if (product != null) {
+                    if (title == null) {
+                        title = product.getTitle();
+                    }
+                    if (image == null) {
+                        image = OrderService.firstImage(product.getImages());
+                    }
+                }
             }
+            orderMap.put("productTitle", title != null ? title : "商品已删除");
+            orderMap.put("productImage", image != null ? image : "");
 
             orderMap.put("price", order.getPrice() != null ? order.getPrice().toString() : "0");
             orderMap.put("status", order.getStatus());
             orderMap.put("createdAt", order.getCreatedTime() != null ? order.getCreatedTime().toString() : "");
             orderMap.put("sellerId", order.getSellerId());
+            // 退款/发货快照：个人中心据此展示退款原因、金额与处理结果
+            orderMap.put("shippedTime", order.getShippedTime());
+            orderMap.put("completedTime", order.getCompletedTime());
+            orderMap.put("refundFromStatus", order.getRefundFromStatus());
+            orderMap.put("refundReason", order.getRefundReason());
+            orderMap.put("refundReply", order.getRefundReply());
+            orderMap.put("refundApplyTime", order.getRefundApplyTime());
+            orderMap.put("refundTime", order.getRefundTime());
+            orderMap.put("refundAmount", order.getRefundAmount());
 
             User seller = sellers.get(order.getSellerId());
             orderMap.put("sellerName", seller != null ? seller.getUsername() : "未知卖家");
 
             // 补齐买卖双方 ID：前端聊天页按 userId 开会话，缺了它无从发起
             orderMap.put("buyerId", order.getBuyerId());
+            // 角色以服务端判定为准，前端不再自行倒推（避免买/卖家按钮错位）
+            orderMap.put("isBuyer", order.getBuyerId() != null && order.getBuyerId().equals(viewerId));
+            orderMap.put("isSeller", order.getSellerId() != null && order.getSellerId().equals(viewerId));
 
             result.add(orderMap);
         }
@@ -228,8 +255,15 @@ public class OrderController {
         String payMethod = body == null ? null : body.get("pay_method");
 
         // 归属校验、过期检查、状态守卫均在服务层完成；
-        // 业务失败通过返回值表达而非抛异常，避免回滚掉「超时取消 + 商品释放」
-        PayResult result = orderService.payOrder(id, payMethod, userOpt.get().getId());
+        // 业务失败通过返回值表达而非抛异常，避免回滚掉「超时取消 + 商品释放」。
+        // 余额支付不足是唯一例外：此时「待发货」已写入，必须抛异常整体回滚，
+        // 因此在这里接住并转成 400。
+        PayResult result;
+        try {
+            result = orderService.payOrder(id, payMethod, userOpt.get().getId());
+        } catch (FundService.InsufficientBalanceException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
         if (!result.isSuccess()) {
             return ResponseEntity.ok(ApiResponse.error(result.getCode(), result.getMessage()));
         }
@@ -325,8 +359,9 @@ public class OrderController {
     /**
      * 批量支付：一次付清购物车结算出的全部订单。
      *
-     * <p>Body: {@code { orderIds: "1,2,3", payMethod: "alipay" }}，
-     * 与前端 {@code api/order.js#batchPayOrders} 的契约一致。</p>
+     * <p>Body: {@code { orderIds: "1,2,3", payMethod: "alipay" }}；
+     * 支付方式同时接受 {@code pay_method}（单笔支付与前端实际使用的写法），
+     * 见 {@link #resolvePayMethod(Map)}。</p>
      *
      * <p><b>循环刻意写在 Controller 里而不是 OrderService 内部</b>：
      * {@code payOrder} 带 {@code @Transactional}，若在同一个 Service 内
@@ -347,8 +382,13 @@ public class OrderController {
         }
         Long userId = userOpt.get().getId();
 
-        String payMethod = body.get("payMethod") == null ? "alipay" : String.valueOf(body.get("payMethod"));
-        List<Long> orderIds = parseOrderIds(body.get("orderIds"));
+        String payMethod = resolvePayMethod(body);
+        if (payMethod == null) {
+            // 缺省支付方式必须在这里拦下：一旦放行就会走到「不扣款」的通道，
+            // 订单照常推进为待发货、卖家照常入账——与单笔支付的报错口径保持一致。
+            return ResponseEntity.ok(ApiResponse.error(400, "请选择支付方式"));
+        }
+        List<Long> orderIds = parseOrderIds(body == null ? null : body.get("orderIds"));
         if (orderIds.isEmpty()) {
             return ResponseEntity.ok(ApiResponse.error(400, "请选择要支付的订单"));
         }
@@ -378,6 +418,11 @@ public class OrderController {
                     row.put("reason", result.getMessage());
                     failed.add(row);
                 }
+            } catch (FundService.InsufficientBalanceException e) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("orderId", orderId);
+                row.put("reason", e.getMessage());
+                failed.add(row);
             } catch (Exception e) {
                 log.error("批量支付订单 {} 失败: ", orderId, e);
                 Map<String, Object> row = new LinkedHashMap<>();
@@ -402,6 +447,37 @@ public class OrderController {
         data.put("paymentChannel", orderService.getPaymentChannel());
         return ResponseEntity.ok(ApiResponse.success(
                 failed.isEmpty() ? "支付成功" : "部分订单支付成功", data));
+    }
+
+    /**
+     * 解析批量支付的支付方式，<b>两种参数名都接受</b>。
+     *
+     * <p>单笔支付 {@code POST /orders/{id}/pay} 的契约是 {@code pay_method}，
+     * 前端 {@code api/order.js#batchPayOrders} 也只发了 {@code pay_method}，
+     * 而本端点最初按 {@code payMethod} 读取。参数名对不上时后端拿不到值、
+     * 静默回退成 {@code alipay}，于是用户选「余额」支付时余额一分不扣、
+     * 订单却已推进为「待发货」——这里同时兼容两种写法。</p>
+     *
+     * <p><b>缺省不再回退成 {@code alipay}</b>：回退会走到「不扣余额、不记 OUT 流水」
+     * 的通道，订单却照样推进为待发货、卖家照样入账——参数名拼错一次就等于白拿货。
+     * 缺省一律返回 {@code null}，由调用方转成 400，与单笔支付
+     * （{@code OrderService#payOrder} 对空值返回「请选择支付方式」）口径一致。</p>
+     *
+     * <p>不能只改前端：已经构建/缓存的旧页面仍在发 {@code pay_method}，
+     * 前端改名会让这些客户端直接失去余额支付能力。</p>
+     *
+     * @return 支付方式；缺省或为空时返回 {@code null}（调用方须按参数缺失处理）
+     */
+    private static String resolvePayMethod(Map<String, Object> body) {
+        Object raw = body == null ? null : body.get("payMethod");
+        if (raw == null && body != null) {
+            raw = body.get("pay_method");
+        }
+        if (raw == null) {
+            return null;
+        }
+        String method = String.valueOf(raw).trim();
+        return method.isEmpty() ? null : method;
     }
 
     /** orderIds 兼容数组 [1,2] 与逗号分隔字符串 "1,2" 两种形态 */
@@ -460,6 +536,89 @@ public class OrderController {
             Order cancelled = orderService.cancelOrder(id);
             return ResponseEntity.ok(ApiResponse.success("订单已取消，商品已恢复在售",
                     orderService.buildCashierView(cancelled)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /**
+     * 买家申请退款：仅「待发货/待收货」订单。
+     *
+     * <p>Body: {@code {reason}}，原因必填且不超过 100 字。退款金额固定为
+     * 成交价 + 运费（买家实付），不接受前端传入，避免被篡改。</p>
+     */
+    @PostMapping("/{id}/refund/apply")
+    public ResponseEntity<ApiResponse<?>> applyRefund(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body) {
+        Optional<User> userOpt = getUserFromToken(authHeader);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+        }
+        try {
+            String reason = body == null ? null : body.get("reason");
+            Order refunding = orderService.applyRefund(id, userOpt.get().getId(), reason);
+            return ResponseEntity.ok(ApiResponse.success("退款申请已提交，等待卖家处理",
+                    orderService.buildCashierView(refunding)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /** 卖家同意退款：5 → 6，商品恢复在售 */
+    @PostMapping("/{id}/refund/approve")
+    public ResponseEntity<ApiResponse<?>> approveRefund(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body) {
+        Optional<User> userOpt = getUserFromToken(authHeader);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+        }
+        try {
+            String reply = body == null ? null : body.get("reply");
+            Order refunded = orderService.approveRefund(id, userOpt.get().getId(), reply);
+            return ResponseEntity.ok(ApiResponse.success("已同意退款，商品已恢复在售",
+                    orderService.buildCashierView(refunded)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /** 卖家拒绝退款：5 → 申请前状态 */
+    @PostMapping("/{id}/refund/reject")
+    public ResponseEntity<ApiResponse<?>> rejectRefund(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body) {
+        Optional<User> userOpt = getUserFromToken(authHeader);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+        }
+        try {
+            String reply = body == null ? null : body.get("reply");
+            Order back = orderService.rejectRefund(id, userOpt.get().getId(), reply);
+            return ResponseEntity.ok(ApiResponse.success("已拒绝退款申请",
+                    orderService.buildCashierView(back)));
+        } catch (OrderService.OrderBusinessException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /** 买家撤销退款申请：5 → 申请前状态 */
+    @PostMapping("/{id}/refund/cancel")
+    public ResponseEntity<ApiResponse<?>> cancelRefund(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id) {
+        Optional<User> userOpt = getUserFromToken(authHeader);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+        }
+        try {
+            Order back = orderService.cancelRefundRequest(id, userOpt.get().getId());
+            return ResponseEntity.ok(ApiResponse.success("已撤销退款申请",
+                    orderService.buildCashierView(back)));
         } catch (OrderService.OrderBusinessException e) {
             return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
         }
@@ -530,11 +689,19 @@ public class OrderController {
         if (!order.getBuyerId().equals(userId) && !order.getSellerId().equals(userId)) {
             return ResponseEntity.ok(ApiResponse.error(403, "无权操作此订单"));
         }
-        // 硬删除不可逆：进行中的订单（待支付/待发货/待收货）删掉就等于抹掉交易凭证，
-        // 商品已锁定、钱已收，却再也查不到这笔单子。只允许清理已终结的订单。
-        if (!OrderStatus.isCompleted(order.getStatus()) && !OrderStatus.isCancelled(order.getStatus())) {
+        // 硬删除不可逆：进行中的订单（待支付/待发货/待收货/退款中）删掉就等于
+        // 抹掉交易凭证，商品已锁定、钱已收，却再也查不到这笔单子。
+        // 只允许清理已终结的订单（已完成/已取消/已退款）。
+        if (!OrderStatus.isTerminal(order.getStatus())) {
             return ResponseEntity.ok(ApiResponse.error(400,
-                    "仅已完成或已取消的订单可以删除"));
+                    "仅已完成、已取消或已退款的订单可以删除"));
+        }
+        // 已终结但动过钱的订单（已完成/已退款必有资金流水）同样不能删：
+        // account_flow / payment_record 通过 order_id 关联订单，没有外键也没有级联，
+        // 删掉订单就只剩「有流水无订单」的孤儿记录，对账时无法解释钱的去向。
+        if (!orderService.canDelete(order)) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "该订单已有资金流水，不能删除"));
         }
         orderRepository.deleteById(id);
         return ResponseEntity.ok(ApiResponse.success("删除成功", null));

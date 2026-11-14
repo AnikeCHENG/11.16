@@ -72,7 +72,7 @@
             <!-- 商品上下文小卡片：让双方清楚在聊哪件商品 -->
             <div v-if="contextProduct" class="ctx-card">
               <div class="ctx-thumb">
-                <img v-if="contextProduct.images" :src="String(contextProduct.images).split(',')[0]" :alt="contextProduct.title" />
+                <img v-if="contextProduct.images" :src="firstImage(contextProduct.images, '')" :alt="contextProduct.title" />
                 <span v-else class="ctx-thumb-fallback" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -137,6 +137,7 @@ import {
 } from '../api/message'
 import { getUserById } from '../api/user'
 import { getProductDetail } from '../api/product'
+import { firstImage } from '../utils/images'
 import { ElMessage } from 'element-plus'
 import { useNotificationStore } from '../stores/notification'
 import { useMessageNotify } from '../composables/useMessageNotify'

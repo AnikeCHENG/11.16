@@ -35,6 +35,23 @@ const NAV_ITEMS = [
   { to: '/profile', label: '我的' }
 ]
 
+/**
+ * 实际渲染的导航项：常规 5 项 + 管理员专属的「管理后台」。
+ *
+ * <p>入口只因 userStore.isAdmin（role === 1 且身份已经服务端确认）出现，
+ * C 端登录用户看不到、也无从点入；即便手输 /admin，路由守卫与后端
+ * AdminAuthInterceptor 还会各拦一道（前端隐藏只是体验，不是安全边界）。</p>
+ *
+ * <p>追加在末尾而不是替换任何一项：常规用户的 5 项导航零位移。</p>
+ */
+const navItems = computed(() => {
+  const items = NAV_ITEMS.slice()
+  if (userStore.isAdmin) {
+    items.push({ to: '/admin', label: '管理后台', admin: true })
+  }
+  return items
+})
+
 const isLoggedIn = ref(
   Boolean(localStorage.getItem('token') || sessionStorage.getItem('token'))
 )
@@ -145,9 +162,25 @@ onBeforeUnmount(() => {
       </router-link>
 
       <ul class="nb-links">
-        <li v-for="item in NAV_ITEMS" :key="item.to">
-          <router-link :to="item.to" class="nb-link">
-            {{ item.label }}
+        <li v-for="item in navItems" :key="item.to">
+          <router-link
+            :to="item.to"
+            class="nb-link"
+            :class="{ 'nb-link--admin': item.admin }"
+            :aria-label="item.admin ? '管理后台' : undefined"
+            :title="item.admin ? '管理后台' : undefined"
+          >
+            <svg
+              v-if="item.admin"
+              class="nb-admin-icon"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span v-if="item.admin" class="nb-admin-label">{{ item.label }}</span>
+            <template v-else>{{ item.label }}</template>
             <span
               v-if="item.to === '/messages' && unreadCount > 0"
               class="nb-badge nb-badge--danger"
@@ -341,6 +374,20 @@ onBeforeUnmount(() => {
   background: linear-gradient(90deg, #2dd4bf, #38bdf8);
 }
 
+/* ---------- 管理后台入口（仅管理员可见，见 navItems） ---------- */
+/* 描边胶囊与常规文字项区分：它是全站唯一的管理入口，
+   混在普通项里等同于把入口藏起来（用户反馈"进不了管理后台"）。
+   用 inset 阴影而不是 border：不占盒模型，8px 纵向内边距保持不变，
+   整条导航的高度不会因多出 1px 边框而与其它页面错位。 */
+.nb-link--admin {
+  margin-left: var(--space-2);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  gap: 4px;
+}
+.nb-link--admin:hover { color: var(--accent); background: var(--accent-soft); }
+.nb-admin-icon { width: 14px; height: 14px; flex-shrink: 0; }
+
 /* ---------- 右：动作区 ---------- */
 .nb-actions { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
 
@@ -450,6 +497,9 @@ onBeforeUnmount(() => {
 @media (max-width: 640px) {
   .nb-links { gap: 0; }
   .nb-link { padding: 8px; font-size: var(--text-sm); }
+  /* 窄屏上 6 项会挤爆一行：管理入口只留盾牌图标，
+     语义由链接上的 aria-label / title 兜底 */
+  .nb-link--admin .nb-admin-label { display: none; }
 }
 
 /* 降级为静态等价物 */

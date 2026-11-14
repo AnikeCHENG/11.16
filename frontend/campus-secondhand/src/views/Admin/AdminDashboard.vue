@@ -47,6 +47,12 @@
           </span>
           <span>举报管理</span>
         </router-link>
+        <router-link to="/admin/student-verifications" class="menu-item">
+          <span class="menu-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 10L12 5 2 10l10 5 10-5z" /><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5" /></svg>
+          </span>
+          <span>学生认证审核</span>
+        </router-link>
       </nav>
 
       <div class="admin-stats">

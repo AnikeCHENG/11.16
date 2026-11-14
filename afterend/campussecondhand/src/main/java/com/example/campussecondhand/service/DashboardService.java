@@ -25,7 +25,7 @@ public class DashboardService {
             result.put("pendingOrderCount", 0L);
             result.put("unreadMessageCount", 0L);
         }
-        result.put("activeUsers", dashboardRepository.activeUsers());
+        result.put("activeUsers", dashboardRepository.activeUsers(5));
         return result;
     }
 

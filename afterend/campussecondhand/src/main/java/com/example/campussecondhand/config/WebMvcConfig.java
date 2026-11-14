@@ -8,7 +8,7 @@ import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * MVC 配置：管理端鉴权拦截器 + 上传图片的静态资源映射。
+ * MVC 配置：C 端写请求兜底鉴权、管理端鉴权拦截器 + 上传图片的静态资源映射。
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -17,12 +17,25 @@ public class WebMvcConfig implements WebMvcConfigurer {
     private AdminAuthInterceptor adminAuthInterceptor;
 
     @Autowired
+    private AuthWriteInterceptor authWriteInterceptor;
+
+    @Autowired
     private UploadService uploadService;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(adminAuthInterceptor)
                 .addPathPatterns("/api/admin/**");
+
+        // C 端写接口的兜底鉴权。
+        //
+        // 管理端已有更严格的 AdminAuthInterceptor（角色 + 封禁），这里排除；
+        // 认证接口本身就要在无身份状态下调用，也必须排除。
+        // 之所以在拦截器层做，而不是继续依赖每个 Controller 手写解析：
+        // 漏写一行就是一个匿名可调用的写接口，历史上已经发生过。
+        registry.addInterceptor(authWriteInterceptor)
+                .addPathPatterns("/api/**")
+                .excludePathPatterns("/api/admin/**", "/api/auth/**", "/api/dev/**");
     }
 
     /**

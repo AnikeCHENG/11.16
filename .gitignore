@@ -2,9 +2,14 @@
 afterend/campussecondhand/target/
 afterend/campussecondhand/backend.log
 
+# 认证截图私有目录（运行期数据，不属于源码）
+afterend/campussecondhand/uploads-private/
+
 # 本地启动脚本：内含开发机的绝对路径，换机器/换目录就跑不了，
 # 属于一次性调试产物，不进版本库。启动方式见 README 或直接跑 mvnw.cmd。
 backend-start.cmd
+start-all.cmd
+backup-all.ps1
 
 # Node
 frontend/campus-secondhand/node_modules/

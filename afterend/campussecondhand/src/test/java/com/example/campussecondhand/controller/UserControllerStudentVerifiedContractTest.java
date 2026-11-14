@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.campussecondhand.common.ApiResponse;
 import com.example.campussecondhand.entity.User;
+import com.example.campussecondhand.repository.AccountRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.PostService;
 import com.example.campussecondhand.service.ReviewService;
@@ -59,6 +62,8 @@ class UserControllerStudentVerifiedContractTest {
     private ReviewService reviewService;
     @Mock
     private PostService postService;
+    @Mock
+    private AccountRepository accountRepository;
     @InjectMocks
     private UserController controller;
 
@@ -68,6 +73,7 @@ class UserControllerStudentVerifiedContractTest {
         u.setId(1L);
         u.setUsername("admin");
         u.setEmail("admin@campus.com");
+        u.setPhone("13800000000");
         u.setStudentNo("202012345678");
         u.setRealName("张三");
         u.setIsStudentVerified(1);
@@ -134,6 +140,19 @@ class UserControllerStudentVerifiedContractTest {
         assertThat((Boolean) flag).isTrue();
     }
 
+    @Test
+    @DisplayName("/profile 不允许修改用户名——JWT 以用户名为 subject")
+    void updateProfileRejectsUsernameChange() {
+        loginAs(verifiedAdmin());
+
+        ApiResponse<?> api = controller.updateProfile(AUTH, Map.of("username", "newName"))
+                .getBody();
+
+        assertThat(api).isNotNull();
+        assertThat(api.getCode()).isEqualTo(400);
+        verify(userRepository, never()).updateById(any(User.class));
+    }
+
     /* ==================== /api/user/hall-profile ==================== */
 
     @Test
@@ -161,6 +180,19 @@ class UserControllerStudentVerifiedContractTest {
         assertThat(data).containsKey("studentVerified");
         assertThat(data.get("studentVerified")).isEqualTo(true);
         assertThat(data).doesNotContainKey("isStudentVerified");
+    }
+
+    @Test
+    @DisplayName("/user/{id} 公开资料不得包含邮箱与手机号")
+    void publicProfileDoesNotLeakContactInfo() {
+        when(userRepository.selectById(1L)).thenReturn(verifiedAdmin());
+
+        Map<String, Object> data = dataOf(controller.getUserById(1L));
+
+        // 本接口无需登录，返回联系方式等于开放全站 PII 枚举
+        assertThat(data).doesNotContainKeys("email", "phone");
+        // 展示所需字段仍要保留
+        assertThat(data).containsKeys("username", "avatar", "studentVerified");
     }
 
     /* ==================== /api/user/student-verify ==================== */

@@ -25,9 +25,9 @@ import java.util.Map;
 /**
  * 管理后台统计。
  *
- * <p>手续费口径：仅统计 {@code status IN (1,2,3)} 的订单，即已支付且未取消。
- * 待支付(0) 尚未收钱、已取消(4) 交易未成立，二者的 service_fee 都不构成平台收入；
- * 若一并累加，财务数字会在答辩时被追问且难以解释。</p>
+ * <p>手续费口径：仅统计 {@code status IN (1,2,3,5)} 的订单，即已支付且未取消、
+ * 未退款。待支付(0) 尚未收钱、已取消(4) 交易未成立、已退款(6) 钱已退出，
+ * 它们的 service_fee 都不构成平台收入；退款中(5) 钱仍在平台侧，暂计入。</p>
  */
 @Service
 public class AdminStatsService {
@@ -226,7 +226,8 @@ public class AdminStatsService {
         QueryWrapper<Order> wrapper = new QueryWrapper<>();
         wrapper.in("status", OrderStatus.PENDING_SHIPMENT.getCode(),
                 OrderStatus.PENDING_RECEIPT.getCode(),
-                OrderStatus.COMPLETED.getCode());
+                OrderStatus.COMPLETED.getCode(),
+                OrderStatus.REFUNDING.getCode());
         return orderRepository.selectList(wrapper);
     }
 

@@ -26,45 +26,28 @@ async function request(path, options = {}) {
     }
     return data
   } catch (e) {
-    const err = new Error('Network request failed')
+    // 保留服务端/业务错误文案：此前统一改写成 'Network request failed'，
+    // 用户看到的是网络故障，实际可能是「未登录」「订单状态已变化」等业务原因。
+    // response 同样要带出去：调用方靠它读 code 区分 401/400/业务码，
+    // 重新 new Error 只会丢掉内层挂上的字段。
+    const err = new Error(e.message || 'Network request failed')
     err.cause = e
+    err.response = e.response
     throw err
   }
 }
-
-/** 未登录/请求失败时的演示数据，形状必须与真实分页返回一致 */
-const MOCK_ORDERS = [
-  { id: 'ORD20260315001', productId: 1, productTitle: '篮球', productImage: '/src/images/篮球.avif', price: '129.00', status: 0, createdAt: '2026-03-15T10:00:00', sellerId: 2, sellerName: '张三' },
-  { id: 'ORD20260315002', productId: 2, productTitle: '足球', productImage: '/src/images/足球.avif', price: '99.00', status: 0, createdAt: '2026-03-15T09:30:00', sellerId: 3, sellerName: '李四' },
-  { id: 'ORD20260315003', productId: 3, productTitle: '羽毛球拍', productImage: '/src/images/羽毛球拍.avif', price: '89.00', status: 0, createdAt: '2026-03-15T09:00:00', sellerId: 4, sellerName: '王五' },
-  { id: 'ORD20260315004', productId: 4, productTitle: '乒乓球拍', productImage: '/src/images/乒乓球拍.avif', price: '59.00', status: 0, createdAt: '2026-03-15T08:30:00', sellerId: 5, sellerName: '赵六' },
-  { id: 'ORD20260315005', productId: 5, productTitle: '小哑铃', productImage: '/src/images/小哑铃.avif', price: '159.00', status: 0, createdAt: '2026-03-15T08:00:00', sellerId: 6, sellerName: '孙七' },
-  { id: 'ORD20260315006', productId: 6, productTitle: '跳绳', productImage: '/src/images/跳绳.avif', price: '29.00', status: 0, createdAt: '2026-03-15T07:30:00', sellerId: 7, sellerName: '周八' }
-]
 
 /**
  * 与我相关的订单（我买到的 + 我卖出的），服务端分页。
  *
  * <p>返回 data 结构：{ list: [], total, page, size }。</p>
+ *
+ * <p><b>不再返回演示数据。</b>此前无 token 或请求失败时会兜底到一组写死的
+ * MOCK_ORDERS，后果是：未登录也能看到「我的订单」，接口挂了页面照样有数据，
+ * 用户以为订单真的存在。失败就应当失败——由调用方展示空态/错误提示。</p>
  */
 export async function getOrderList(page = 1, size = 10) {
-  const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-  if (!token) {
-    // 无 token：返回演示数据，形状必须与真实返回一致，否则调用方取 .list 会拿到 undefined
-    return {
-      code: 200,
-      data: { list: MOCK_ORDERS, total: MOCK_ORDERS.length, page, size }
-    }
-  }
-  try {
-    return await request(`/orders/my?page=${page}&size=${size}`)
-  } catch (error) {
-    console.error('获取订单列表失败:', error)
-    return {
-      code: 200,
-      data: { list: MOCK_ORDERS, total: MOCK_ORDERS.length, page, size }
-    }
-  }
+  return await request(`/orders/my?page=${page}&size=${size}`)
 }
 
 // 发货：仅卖家、仅「待发货」订单，后端用 `WHERE id=? AND status=1` 的条件更新推进
@@ -117,13 +100,47 @@ export async function cancelOrderById(orderId) {
   return await request(`/orders/${orderId}/cancel`, { method: 'POST' })
 }
 
+// 买家申请退款（仅已支付未收货：1 待发货 / 2 待收货）
+export async function applyRefund(orderId, reason) {
+  return await request(`/orders/${orderId}/refund/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  })
+}
+
+// 卖家同意退款（仅「退款中」订单）
+export async function approveRefund(orderId, reply) {
+  return await request(`/orders/${orderId}/refund/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ reply })
+  })
+}
+
+// 卖家拒绝退款（仅「退款中」订单）
+export async function rejectRefund(orderId, reply) {
+  return await request(`/orders/${orderId}/refund/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reply })
+  })
+}
+
+// 买家撤销退款申请（仅「退款中」订单）
+export async function cancelRefundRequest(orderId) {
+  return await request(`/orders/${orderId}/refund/cancel`, { method: 'POST' })
+}
+
 /**
- * 批量支付：事务内全部支付，每笔须 status=0 且属当前用户。
- * Body { orderIds: [...] }，返回 { tradeNo, totalAmount }。
+ * 批量支付：逐笔支付，每笔须 status=0 且属当前用户。
+ * Body { orderIds: [...], payMethod }，返回 { tradeNo, totalAmount }。
+ *
+ * <p>参数名必须与后端 {@code OrderController#batchPay} 的契约一致：以
+ * {@code payMethod} 为准。此前这里发的是 {@code pay_method}，而后端按
+ * {@code payMethod} 读取，结果支付方式被静默丢成默认的 alipay——用户选
+ * 「余额支付」时余额不会扣，订单却被标记为已支付。</p>
  */
 export async function batchPayOrders(orderIds, payMethod = 'alipay') {
   return await request('/orders/batch-pay', {
     method: 'POST',
-    body: JSON.stringify({ orderIds, pay_method: payMethod })
+    body: JSON.stringify({ orderIds, payMethod })
   })
 }

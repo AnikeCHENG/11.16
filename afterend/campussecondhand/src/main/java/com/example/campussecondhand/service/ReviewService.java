@@ -2,12 +2,14 @@ package com.example.campussecondhand.service;
 
 import com.example.campussecondhand.entity.Order;
 import com.example.campussecondhand.entity.Review;
+import com.example.campussecondhand.enums.CreditEvent;
 import com.example.campussecondhand.enums.OrderStatus;
 import com.example.campussecondhand.exception.BadRequestException;
 import com.example.campussecondhand.repository.OrderRepository;
 import com.example.campussecondhand.repository.ReviewRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -37,9 +40,26 @@ public class ReviewService {
     private final ReviewRepository reviewRepository;
     private final OrderRepository orderRepository;
 
+    /**
+     * 信用分服务：可选注入，走 setter 以保持既有
+     * {@code new ReviewService(reviewRepo, orderRepo)} 测试写法不变。
+     */
+    private CreditService creditService;
+
+    @Autowired(required = false)
+    void setCreditService(CreditService creditService) {
+        this.creditService = creditService;
+    }
+
     public ReviewService(ReviewRepository reviewRepository, OrderRepository orderRepository) {
         this.reviewRepository = reviewRepository;
         this.orderRepository = orderRepository;
+    }
+
+    private void recordCredit(Long userId, CreditEvent event, Long bizId, String remark) {
+        if (creditService != null) {
+            creditService.record(userId, event, bizId, remark);
+        }
     }
 
     /**
@@ -89,6 +109,16 @@ public class ReviewService {
             // 并发双击：两个请求都通过了上面的"已评价"检查，靠唯一索引拦住第二个
             throw new BadRequestException("该订单已评价");
         }
+
+        // 好评 +1，差评（≤2 星）-3，3 星不动。biz_id 用订单ID：一单一评，天然幂等
+        if (rating >= GOOD_RATING) {
+            recordCredit(order.getSellerId(), CreditEvent.REVIEW_GOOD, orderId,
+                    "订单 " + order.getOrderNo() + " 收到 " + rating + " 星评价");
+        } else if (rating <= 2) {
+            recordCredit(order.getSellerId(), CreditEvent.REVIEW_BAD, orderId,
+                    "订单 " + order.getOrderNo() + " 收到 " + rating + " 星评价");
+        }
+
         log.info("订单 {} 收到评价：{} 星", orderId, rating);
         return review;
     }
@@ -125,6 +155,20 @@ public class ReviewService {
                         .divide(BigDecimal.valueOf(total), 1, RoundingMode.HALF_UP));
         result.put("hasReview", total > 0);
         return result;
+    }
+
+    /**
+     * 卖家收到的文字评价（最近 N 条），供商品详情页展示。
+     *
+     * <p>limit 在服务层收敛到 1~20：调用方传 null、0 或超大值都不会
+     * 变成全表扫描。没有评价时返回空列表而不是 null，前端可直接 v-for。</p>
+     */
+    public List<Map<String, Object>> listForSeller(Long sellerId, Integer limit) {
+        if (sellerId == null) {
+            return List.of();
+        }
+        int size = limit == null ? 5 : Math.max(1, Math.min(limit, 20));
+        return reviewRepository.listByTargetId(sellerId, size);
     }
 
     private static long toLong(Object value) {
