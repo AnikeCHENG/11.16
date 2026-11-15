@@ -1,4 +1,12 @@
-const BASE = import.meta.env.VITE_API_BASE || '/api/user'
+// 用户相关接口的统一前缀。
+//
+// <p><b>必须自己拼 `/user`，不能直接复用 VITE_API_BASE：</b>该变量的语义是
+// 「部署前缀」（开发环境为 `/api`，部署时可能是 `/prefix/api`），并不包含
+// 具体资源段。此前写成 `VITE_API_BASE || '/api/user'`，一旦 .env 里设置了
+// `/api`，`/profile` 就变成 `/api/profile`（后端真实路径是 `/api/user/profile`），
+// 个人资料、余额、认证状态全部 404。</p>
+const API_BASE = import.meta.env.VITE_API_BASE || '/api'
+const BASE = `${API_BASE}/user`
 
 async function request(path, options = {}) {
   let token = localStorage.getItem('token')

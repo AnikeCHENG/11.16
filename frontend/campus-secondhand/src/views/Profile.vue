@@ -1102,6 +1102,9 @@ async function onShotFileChange(event) {
     event.target.value = ''
   } finally {
     shotUploading.value = false
+    // 清空选择：浏览器对「同一个文件」不会再次触发 change，
+    // 上传失败后重选同一张图会像点了没反应；清空后即可重新触发。
+    event.target.value = ''
   }
 }
 

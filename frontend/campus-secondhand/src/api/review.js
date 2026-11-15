@@ -1,12 +1,14 @@
 // 评价与学生认证相关接口
 //
-// 路径归属两个不同前缀：订单评价在 /api/orders，用户信息在 /api/user，
-// 因此这里各自定义 BASE，与 user.js / order.js 保持同样的写法。
-// 之所以不抽公共 request 到一起，是因为现有 api 模块各自维护 BASE 已是既定风格，
-// 单独抽一层反而要改动全部 8 个模块，超出本次范围。
-
-const USER_BASE = import.meta.env.VITE_API_BASE || '/api/user'
-const ORDER_BASE = import.meta.env.VITE_ORDER_BASE || '/api/orders'
+// 路径归属两个不同前缀：订单评价在 /api/orders，用户信息在 /api/user。
+//
+// <p><b>不能用 `VITE_API_BASE || '/api/user'`：</b>VITE_API_BASE 表示部署前缀
+// （开发环境 `/api`），本身不含资源段。此前这样写导致设置该变量后
+// 截图上传、学号认证、认证进度全部打到 `/api/student-verification/...`（404），
+// 用户点「选择文件」后上传失败，后台也永远收不到申请。</p>
+const API_BASE = import.meta.env.VITE_API_BASE || '/api'
+const USER_BASE = `${API_BASE}/user`
+const ORDER_BASE = import.meta.env.VITE_ORDER_BASE || `${API_BASE}/orders`
 
 async function request(base, path, options = {}) {
   let token = localStorage.getItem('token') || sessionStorage.getItem('token')
