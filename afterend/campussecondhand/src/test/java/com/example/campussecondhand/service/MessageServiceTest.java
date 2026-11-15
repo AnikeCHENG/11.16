@@ -1,6 +1,7 @@
 package com.example.campussecondhand.service;
 
 import com.example.campussecondhand.entity.Message;
+import com.example.campussecondhand.entity.User;
 import com.example.campussecondhand.repository.MessageRepository;
 import com.example.campussecondhand.repository.ProductRepository;
 import com.example.campussecondhand.repository.UserRepository;
@@ -97,5 +98,107 @@ class MessageServiceTest {
         assertThat(messageService.markAllAsRead(null)).isFalse();
 
         verifyNoInteractions(messageRepository);
+    }
+
+    // ==================== 图片消息 ====================
+
+    private Message imageMessage(String content, String caption) {
+        Message m = new Message();
+        m.setSenderId(1L);
+        m.setReceiverId(2L);
+        m.setMsgType(1);
+        m.setContent(content);
+        m.setCaption(caption);
+        return m;
+    }
+
+    @Test
+    @DisplayName("图片消息：合法上传路径 + 配文入库")
+    void acceptsImageMessage() {
+        when(userRepository.selectById(2L)).thenReturn(new User());
+        Message m = imageMessage("/uploads/2026/11/0f2c9a1b3d4e5f60718293a4b5c6d7e8.png", "  看看这个  ");
+
+        messageService.send(m);
+
+        assertThat(m.getContent()).isEqualTo("/uploads/2026/11/0f2c9a1b3d4e5f60718293a4b5c6d7e8.png");
+        assertThat(m.getMsgType()).isEqualTo(1);
+        assertThat(m.getCaption()).isEqualTo("看看这个");
+        verify(messageRepository).insert(m);
+    }
+
+    @Test
+    @DisplayName("图片消息：无配文时 caption 存 null")
+    void imageMessageWithoutCaptionStoresNull() {
+        when(userRepository.selectById(2L)).thenReturn(new User());
+        Message m = imageMessage("/uploads/2026/11/0f2c9a1b3d4e5f60718293a4b5c6d7e8.jpg", "   ");
+
+        messageService.send(m);
+
+        assertThat(m.getCaption()).isNull();
+        verify(messageRepository).insert(m);
+    }
+
+    @Test
+    @DisplayName("图片消息：外部 URL / 非上传路径一律拒绝")
+    void rejectsNonUploadImagePath() {
+        when(userRepository.selectById(2L)).thenReturn(new User());
+
+        assertThat(org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> messageService.send(imageMessage("https://evil.example.com/x.png", null)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("图片消息无效"))
+                .isNotNull();
+        assertThat(org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> messageService.send(imageMessage("/uploads/../../etc/passwd", null)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("图片消息无效"))
+                .isNotNull();
+
+        verify(messageRepository, never()).insert(any(Message.class));
+    }
+
+    @Test
+    @DisplayName("图片消息：配文超长被拒绝")
+    void rejectsTooLongCaption() {
+        when(userRepository.selectById(2L)).thenReturn(new User());
+        String caption = "字".repeat(201);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> messageService.send(imageMessage(
+                        "/uploads/2026/11/0f2c9a1b3d4e5f60718293a4b5c6d7e8.webp", caption)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("配文");
+
+        verify(messageRepository, never()).insert(any(Message.class));
+    }
+
+    @Test
+    @DisplayName("文本消息：msgType 归一为 0 且不携带配文")
+    void textMessageNormalizesTypeAndDropsCaption() {
+        when(userRepository.selectById(2L)).thenReturn(new User());
+        Message m = new Message();
+        m.setSenderId(1L);
+        m.setReceiverId(2L);
+        m.setContent("你好");
+        m.setCaption("不该出现的配文");
+        m.setMsgType(null);
+
+        messageService.send(m);
+
+        assertThat(m.getMsgType()).isEqualTo(0);
+        assertThat(m.getCaption()).isNull();
+        verify(messageRepository).insert(m);
+    }
+
+    @Test
+    @DisplayName("会话预览：图片消息显示「[图片] 配文」，不暴露裸路径")
+    void previewHidesImagePath() {
+        Message image = imageMessage("/uploads/2026/11/0f2c9a1b3d4e5f60718293a4b5c6d7e8.png", "约时间");
+        assertThat(MessageService.previewOf(image)).isEqualTo("[图片] 约时间");
+
+        image.setCaption(null);
+        assertThat(MessageService.previewOf(image)).isEqualTo("[图片]");
+
+        Message text = new Message();
+        text.setContent("你好");
+        assertThat(MessageService.previewOf(text)).isEqualTo("你好");
     }
 }

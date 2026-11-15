@@ -175,12 +175,20 @@ public class MessageController {
         }
         Long productId = parseLong(params.get("productId"));
 
+        // 消息类型：type=image（或 1）为图片消息，content 携带 /uploads 图片路径，
+        // caption 为可选配文；其余一律按文本处理
+        String type = params.get("type") == null ? "" : String.valueOf(params.get("type"));
+        boolean image = "image".equalsIgnoreCase(type) || "1".equals(type);
+        String caption = params.get("caption") == null ? null : String.valueOf(params.get("caption"));
+
         try {
             Message message = new Message();
             message.setSenderId(userOpt.get().getId());
             message.setReceiverId(receiverId);
             message.setProductId(productId);
             message.setContent(content);
+            message.setMsgType(image ? MessageService.TYPE_IMAGE : 0);
+            message.setCaption(caption);
 
             Message sent = messageService.send(message);
             log.info("发送私信: from={} to={} productId={} contentLength={}",

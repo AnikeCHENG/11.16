@@ -104,7 +104,8 @@ map.put("otherUserId", otherId);
         });
         Object time = conv.get("lastMessageTime");
         if (time == null || (msg.getCreatedTime() != null && msg.getCreatedTime().isAfter((java.time.LocalDateTime) time))) {
-            conv.put("lastMessage", msg.getContent());
+            // 预览不暴露图片裸路径：图片消息显示「[图片] 配文」
+            conv.put("lastMessage", previewOf(msg));
             conv.put("lastMessageTime", msg.getCreatedTime());
         }
         if (fromThem && msg.getIsRead() != null && msg.getIsRead() == 0) {
@@ -122,6 +123,30 @@ map.put("otherUserId", otherId);
 
     /** 单条消息内容长度上限 */
     public static final int MAX_CONTENT_LENGTH = 1000;
+
+    /** 图片消息配文长度上限 */
+    public static final int MAX_CAPTION_LENGTH = 200;
+
+    /** 消息类型：图片 */
+    public static final int TYPE_IMAGE = 1;
+
+    /**
+     * 图片消息 content 的合法形态。图片必须先经 {@code POST /api/upload/image}
+     * 落盘拿到 {@code /uploads/yyyy/MM/<32位hex>.<ext>} 路径，再把路径作为消息发出；
+     * 这里拒绝任何外部 URL 与路径穿越，防止图片消息被当成任意外链/资源注入位。
+     * 扩展名与 {@code UploadService#TYPE_TO_EXT} 的落盘命名保持一致。
+     */
+    private static final java.util.regex.Pattern UPLOAD_PATH =
+            java.util.regex.Pattern.compile("^/uploads/\\d{4}/\\d{2}/[0-9a-f]{32}\\.(jpg|png|gif|webp)$");
+
+    /** 会话列表「最后一条消息」预览：图片消息不暴露裸路径 */
+    public static String previewOf(Message msg) {
+        if (msg != null && msg.getMsgType() != null && msg.getMsgType() == TYPE_IMAGE) {
+            String caption = msg.getCaption();
+            return caption == null || caption.isBlank() ? "[图片]" : "[图片] " + caption.trim();
+        }
+        return msg == null ? "" : msg.getContent();
+    }
 
     /**
      * 发送消息。
@@ -152,6 +177,23 @@ map.put("otherUserId", otherId);
         content = content.trim();
         if (content.length() > MAX_CONTENT_LENGTH) {
             throw new IllegalArgumentException("消息内容不能超过 " + MAX_CONTENT_LENGTH + " 个字符");
+        }
+
+        // 消息类型：缺省/非法值一律归为文本，只有显式 1 才是图片
+        boolean isImage = message.getMsgType() != null && message.getMsgType() == TYPE_IMAGE;
+        if (!isImage) {
+            message.setMsgType(0);
+            message.setCaption(null); // 文本消息不携带配文
+        } else {
+            // 图片消息：content 必须是本站上传目录里的图片路径
+            if (!UPLOAD_PATH.matcher(content).matches()) {
+                throw new IllegalArgumentException("图片消息无效，请重新上传图片");
+            }
+            String caption = message.getCaption() == null ? "" : message.getCaption().trim();
+            if (caption.length() > MAX_CAPTION_LENGTH) {
+                throw new IllegalArgumentException("图片配文不能超过 " + MAX_CAPTION_LENGTH + " 个字符");
+            }
+            message.setCaption(caption.isEmpty() ? null : caption);
         }
 
         // 附带商品上下文时校验商品确实存在，避免挂到已删除商品上

@@ -22,7 +22,7 @@
 
 **项目没有 Flyway / Liquibase。** 迁移靠手工执行 SQL 文件。
 
-- `src\main\resources\*.sql` 中有 **18 个 `migration-*.sql`**，需**手工**在数据库执行。
+- `src\main\resources\*.sql` 中有 **19 个 `migration-*.sql`**，需**手工**在数据库执行。
 - `application.properties` 的 `spring.sql.init.schema-locations=classpath:plaza-schema.sql`
   只会在启动时**自动执行 `plaza-schema.sql` 一个文件**，其余 migration 一概不自动跑。
 - ⇒ **改了实体字段却没跑对应 migration，就会直接抛 "Unknown column"。改 schema 必须先跑 SQL。**

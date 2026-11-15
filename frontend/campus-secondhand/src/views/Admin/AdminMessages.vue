@@ -21,7 +21,7 @@
         <div class="message-info">
           <p><strong>发送者:</strong> {{ message.sender?.username || '未知用户' }}</p>
           <p><strong>接收者:</strong> {{ message.receiver?.username || '未知用户' }}</p>
-          <p><strong>内容:</strong> {{ message.content }}</p>
+          <p><strong>内容:</strong> <template v-if="message.msgType === 1">[图片]<template v-if="message.caption"> {{ message.caption }}</template></template><template v-else>{{ message.content }}</template></p>
         </div>
         <div class="message-actions">
           <button @click="deleteMessage(message.id)" class="btn-danger">

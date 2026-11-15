@@ -23,6 +23,20 @@ public class Message {
     @TableField("content")
     private String content;
 
+    /**
+     * 消息类型：0=文本（默认），1=图片。
+     *
+     * <p>图片消息的 {@link #content} 复用为图片路径（形如
+     * {@code /uploads/2026/11/<32位hex>.png}），由上传接口产生；
+     * 配文放 {@link #caption}。存量消息经迁移自动归为文本。</p>
+     */
+    @TableField("msg_type")
+    private Integer msgType = 0;
+
+    /** 图片消息的配文（选填，≤200 字；文本消息恒为 null） */
+    @TableField("caption")
+    private String caption;
+
     @TableField("is_read")
     private Integer isRead = 0;
 
@@ -54,6 +68,12 @@ public class Message {
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+
+    public Integer getMsgType() { return msgType; }
+    public void setMsgType(Integer msgType) { this.msgType = msgType; }
+
+    public String getCaption() { return caption; }
+    public void setCaption(String caption) { this.caption = caption; }
 
     public Integer getIsRead() { return isRead; }
     public void setIsRead(Integer isRead) { this.isRead = isRead; }

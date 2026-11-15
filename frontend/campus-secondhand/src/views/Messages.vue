@@ -1,6 +1,11 @@
 <template>
   <div class="page messages-page">
 
+    <!-- 图片放大预览：点击遮罩或按 Esc 关闭 -->
+    <div v-if="lightboxUrl" class="lightbox-mask" role="dialog" aria-label="图片预览" @click="lightboxUrl = ''">
+      <img :src="lightboxUrl" alt="聊天图片" @click.stop />
+    </div>
+
     <main class="msg-main">
       <div class="msg-shell">
         <!-- 会话列表 -->
@@ -103,13 +108,49 @@
                   <img :src="currentConversation?.avatar || defaultAvatar" alt="头像" />
                 </div>
                 <div class="message-content">
-                  <div class="message-bubble"><p>{{ msg.content }}</p></div>
+                  <!-- 图片消息：气泡内嵌图片（点击放大），配文可选 -->
+                  <div v-if="isImage(msg)" class="message-bubble msg-image">
+                    <img
+                      class="msg-image-thumb"
+                      :src="msg.content"
+                      alt="图片消息"
+                      loading="lazy"
+                      @click="lightboxUrl = msg.content"
+                    />
+                    <p v-if="msg.caption">{{ msg.caption }}</p>
+                  </div>
+                  <div v-else class="message-bubble"><p>{{ msg.content }}</p></div>
                   <span class="message-time">{{ formatMessageTime(msg.createdTime) }}</span>
                 </div>
               </div>
             </div>
 
             <div class="chat-input">
+              <!-- 图片上传的 file input 隐藏，由旁边的图片按钮触发 -->
+              <input
+                ref="imageInput"
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp,.jpg,.jpeg,.png,.gif,.webp"
+                class="chat-image-input"
+                :disabled="imageUploading"
+                aria-hidden="true"
+                tabindex="-1"
+                @change="onImageFileChange"
+              />
+              <button
+                class="chat-image-btn"
+                type="button"
+                title="发送图片（输入框里的文字会作为配文）"
+                :disabled="imageUploading || !selectedUserId"
+                aria-label="发送图片"
+                @click="pickImage"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+              </button>
               <input
                 type="text"
                 v-model="newMessage"
@@ -117,7 +158,7 @@
                 aria-label="消息输入"
                 @keyup.enter="sendMessage"
               />
-              <button class="btn btn-primary" type="button" :disabled="!newMessage.trim()" @click="sendMessage">发送</button>
+              <button class="btn btn-primary" type="button" :disabled="!newMessage.trim() || imageUploading" @click="sendMessage">发送</button>
             </div>
           </template>
         </section>
@@ -127,7 +168,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   getConversations,
@@ -137,6 +178,7 @@ import {
 } from '../api/message'
 import { getUserById } from '../api/user'
 import { getProductDetail } from '../api/product'
+import { uploadImage } from '../api/upload'
 import { firstImage } from '../utils/images'
 import { ElMessage } from 'element-plus'
 import { useNotificationStore } from '../stores/notification'
@@ -183,6 +225,105 @@ function resolveCurrentUserId() {
 }
 
 const currentUserId = ref(resolveCurrentUserId())
+
+/** 图片消息上传中标记：上传期间禁用图片按钮与发送按钮 */
+const imageUploading = ref(false)
+/** 图片放大预览的 URL；空串表示未打开 */
+const lightboxUrl = ref('')
+/** 隐藏的图片 file input（由图片按钮触发） */
+const imageInput = ref(null)
+
+/** 上传前与后端 UploadService 白名单一致的本地图额类型/大小限制 */
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024
+
+/** 该消息是否为图片消息（后端 msgType=1；乐观渲染时也可能带 type='image'） */
+function isImage(msg) {
+  return msg?.msgType === 1 || msg?.msgType === '1' || msg?.type === 'image'
+}
+
+function pickImage() {
+  imageInput.value?.click()
+}
+
+/**
+ * 选择图片 → 上传 → 以「图片消息」发送。
+ *
+ * <p>交互约定：发送前输入框里已打的字自动作为配文一并发出（可不打），
+ * 与微信「先打字再发图」的习惯一致。上传失败不清空输入框，配文不丢。</p>
+ */
+async function onImageFileChange(event) {
+  const file = event.target.files?.[0]
+  event.target.value = '' // 允许重选同一张图
+  if (!file) return
+  if (!selectedUserId.value) {
+    ElMessage.warning('先选择聊天对象再发送图片')
+    return
+  }
+  if (!/^image\/(jpeg|png|gif|webp)$/i.test(file.type || '')) {
+    ElMessage.error('只支持 JPG / PNG / GIF / WebP 格式的图片')
+    return
+  }
+  if (file.size > IMAGE_MAX_BYTES) {
+    ElMessage.error('图片不能超过 5MB')
+    return
+  }
+
+  const caption = newMessage.value.trim()
+  imageUploading.value = true
+  try {
+    // 与商品图片同一条上传管线：落盘 /uploads/**，返回可直接访问的路径
+    const url = await uploadImage(file, file.name || 'chat-image.png')
+    const res = await sendMessageApi({
+      receiverId: selectedUserId.value,
+      content: url,
+      caption,
+      type: 'image',
+      productId: contextProductId.value
+    })
+    if (res.code === 200) {
+      newMessage.value = ''
+      pushLocalMessage(res, url, { msgType: 1, caption })
+      await nextTick()
+      scrollToBottom()
+    } else {
+      ElMessage.error(res.message || '图片发送失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.cause?.message || e?.message || '图片发送失败，请检查网络')
+  } finally {
+    imageUploading.value = false
+  }
+}
+
+/** 发送成功后的本地乐观追加：文本/图片消息共用，保持与后端返回同构 */
+function pushLocalMessage(res, content, extra = {}) {
+  const msg = {
+    id: res.data?.id || Date.now(),
+    senderId: currentUserId.value,
+    receiverId: selectedUserId.value,
+    content,
+    productId: contextProductId.value,
+    msgType: extra.msgType || 0,
+    caption: extra.caption || '',
+    createdTime: new Date().toISOString(),
+    isRead: 0
+  }
+  currentMessages.value.push(msg)
+  // 新会话在列表中还不存在，首条消息发出后应立刻可见
+  if (isNewChat.value && draftConversation.value) {
+    conversations.value = [
+      { ...draftConversation.value, lastMessage: messagePreview(msg), lastMessageTime: msg.createdTime },
+      ...conversations.value
+    ]
+    draftConversation.value = null
+  }
+  return msg
+}
+
+/** 会话预览文案：与后端 MessageService#previewOf 对齐 */
+function messagePreview(msg) {
+  return isImage(msg) ? (msg.caption ? `[图片] ${msg.caption}` : '[图片]') : msg.content
+}
 
 const defaultAvatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' fill='%230b6e54'/%3E%3Ccircle cx='20' cy='16' r='6' fill='%23ffffff'/%3E%3Cpath d='M8 36c0-6.6 5.4-12 12-12s12 5.4 12 12' fill='%23ffffff'/%3E%3C/svg%3E"
 
@@ -359,23 +500,7 @@ async function sendMessage() {
       productId: contextProductId.value
     })
     if (res.code === 200) {
-      currentMessages.value.push({
-        id: res.data?.id || Date.now(),
-        senderId: currentUserId.value,
-        receiverId: selectedUserId.value,
-        content,
-        productId: contextProductId.value,
-        createdTime: new Date().toISOString(),
-        isRead: 0
-      })
-      // 新会话在列表中还不存在，首条消息发出后应立刻可见
-      if (isNewChat.value && draftConversation.value) {
-        conversations.value = [
-          { ...draftConversation.value, lastMessage: content, lastMessageTime: new Date().toISOString() },
-          ...conversations.value
-        ]
-        draftConversation.value = null
-      }
+      pushLocalMessage(res, content)
       await nextTick()
       scrollToBottom()
     } else {
@@ -407,7 +532,13 @@ function formatMessageTime(time) {
 
 watch(activeTab, () => { selectedUserId.value = null; currentMessages.value = [] })
 
+// Esc 关闭图片预览
+function onWindowKeydown(e) {
+  if (e.key === 'Escape') lightboxUrl.value = ''
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', onWindowKeydown)
   await fetchMessages()
   const sellerId = route.query.sellerId || route.query.userId
   if (sellerId) {
@@ -417,6 +548,8 @@ onMounted(async () => {
     await loadContextProduct()
   }
 })
+
+onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown))
 </script>
 
 <style scoped>
@@ -476,9 +609,25 @@ onMounted(async () => {
 .message.sent .message-bubble p { color: #fff; }
 .message-time { font-size: var(--text-xs); color: var(--text-3); padding: 0 4px; }
 
-.chat-input { display: flex; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-top: 1px solid var(--border); }
+.chat-input { display: flex; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-top: 1px solid var(--border); align-items: center; }
 .chat-input input { flex: 1; padding: 10px 14px; font-size: var(--text-base); color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); outline: none; }
 .chat-input input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ---- 图片消息 ---- */
+.chat-image-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.chat-image-btn { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex-shrink: 0; color: var(--text-2); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+.chat-image-btn svg { width: 20px; height: 20px; }
+.chat-image-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.chat-image-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.msg-image { padding: 6px; }
+.msg-image-thumb { display: block; max-width: 220px; max-height: 220px; width: auto; height: auto; border-radius: calc(var(--radius-lg) - 4px); cursor: zoom-in; }
+.message.sent .msg-image { background: var(--surface); border-color: var(--border); }
+.msg-image p { margin-top: 4px; font-size: var(--text-base); color: var(--text); line-height: var(--leading-normal); padding: 0 8px 2px; }
+
+/* ---- 图片放大预览 ---- */
+.lightbox-mask { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; padding: var(--space-6); background: rgba(0, 0, 0, 0.82); cursor: zoom-out; }
+.lightbox-mask img { max-width: 92vw; max-height: 90vh; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
 
 @media (max-width: 860px) {
   .msg-shell { grid-template-columns: 1fr; }
