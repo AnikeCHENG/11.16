@@ -222,6 +222,7 @@ import FlyToCart from '../components/FlyToCart.vue'
 import { checkFavorite, addFavorite, removeFavoriteById } from '../api/favorites'
 import { getSessionUserId } from '../utils/session'
 import { parseImages } from '../utils/images'
+import { categoryLabel, loadCategories } from '../utils/categories'
 
 const router = useRouter()
 const route = useRoute()
@@ -600,8 +601,7 @@ function formatDate(timestamp) {
 }
 
 function getCategoryLabel(category) {
-  const categories = { books: '教材书籍', electronics: '电子产品', transport: '出行工具', gaming: '游戏数码', clothing: '服饰穿搭', living: '生活用品', other: '其他' }
-  return categories[category] || category || '未分类'
+  return category ? categoryLabel(category) : '未分类'
 }
 /**
  * 成色等级 0~4 → 中文标签，与后端 {@code ConditionLevel} 一一对应。
@@ -618,7 +618,10 @@ const isFlawFree = computed(() => !product.value?.flawDescription?.trim())
 function getStatusClass(status) { return ({ 0: 'badge', 1: 'badge-success', 2: 'badge-danger' })[status] || 'badge-success' }
 function getStatusText(status) { return ({ 0: '已下架', 1: '在售', 2: '已售' })[status] || '在售' }
 
-onMounted(fetchProduct)
+onMounted(() => {
+  loadCategories()
+  fetchProduct()
+})
 </script>
 
 <style scoped>

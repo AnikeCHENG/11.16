@@ -89,6 +89,13 @@ export async function deleteProduct(id) {
   })
 }
 
+/** 被拒绝的商品重新提交人工审核（仅卖家本人、仅未通过状态） */
+export async function resubmitProduct(id) {
+  return await request(`/products/${id}/resubmit`, {
+    method: 'POST'
+  })
+}
+
 export async function markAsSold(id) {
   return await request(`/products/sold/${id}`, {
     method: 'PUT'
@@ -127,6 +134,7 @@ export default {
   createProduct,
   updateProduct,
   deleteProduct,
+  resubmitProduct,
   markAsSold,
   toggleLike,
   getInteractionStats,

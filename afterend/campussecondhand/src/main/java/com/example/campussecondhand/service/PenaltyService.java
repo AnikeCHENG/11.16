@@ -2,6 +2,7 @@ package com.example.campussecondhand.service;
 
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.entity.User;
+import com.example.campussecondhand.enums.ProductReviewStatus;
 import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.exception.BadRequestException;
 import com.example.campussecondhand.repository.ProductRepository;
@@ -66,6 +67,12 @@ public class PenaltyService {
         ProductStatus target = ProductStatus.fromCode(status);
         if (target == null) {
             throw new BadRequestException("非法的商品状态值");
+        }
+        // 审核门禁：未通过审核的商品只能走审核接口上架，
+        // 否则后台「上架」按钮会绕过人工审核流程
+        if (target == ProductStatus.ON_SALE
+                && !ProductReviewStatus.isApproved(product.getReviewStatus())) {
+            throw new BadRequestException("该商品尚未通过审核，请先在商品审核中通过后再上架");
         }
 
         product.setStatus(target.getCode());

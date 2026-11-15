@@ -11,6 +11,7 @@ import com.example.campussecondhand.entity.Order;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.enums.ConditionLevel;
 import com.example.campussecondhand.enums.OrderStatus;
+import com.example.campussecondhand.enums.ProductReviewStatus;
 import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.entity.User;
 import com.example.campussecondhand.exception.BadRequestException;
@@ -18,6 +19,7 @@ import com.example.campussecondhand.exception.ForbiddenException;
 import com.example.campussecondhand.repository.OrderRepository;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.service.BrowseHistoryService;
+import com.example.campussecondhand.service.ProductReviewService;
 import com.example.campussecondhand.service.ProductService;
 import com.example.campussecondhand.util.JwtUtil;
 import org.slf4j.Logger;
@@ -41,6 +43,9 @@ public class ProductController {
 
     @Autowired
     private ProductService productService;
+
+    @Autowired
+    private ProductReviewService productReviewService;
 
     @Autowired
     private BrowseHistoryService browseHistoryService;
@@ -142,12 +147,28 @@ public class ProductController {
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
         Product product = productService.findByIdWithViewCount(id);
         if (product != null) {
+            // 未通过审核的商品只允许卖家本人与管理员预览，其他人一律 404。
+            // 不能返回 403：那等于告诉外人"这个 id 确实存在一件未公开商品"。
+            if (!ProductReviewStatus.isApproved(product.getReviewStatus())
+                    && !canPreviewUnapproved(authHeader, product.getUserId())) {
+                return ResponseEntity.ok(ApiResponse.error(404, "商品不存在"));
+            }
             User seller = userRepository.selectById(product.getUserId());
             if (seller != null) product.setSeller(seller);
             recordBrowseHistory(authHeader, id);
             return ResponseEntity.ok(ApiResponse.success("获取成功", product));
         }
         return ResponseEntity.ok(ApiResponse.error(404, "商品不存在"));
+    }
+
+    /** 未通过审核商品的可见性：卖家本人或管理员 */
+    private boolean canPreviewUnapproved(String authHeader, Long ownerId) {
+        Optional<User> userOpt = resolveUser(authHeader);
+        if (userOpt.isEmpty()) {
+            return false;
+        }
+        User user = userOpt.get();
+        return Objects.equals(user.getId(), ownerId) || Integer.valueOf(1).equals(user.getRole());
     }
 
     /**
@@ -272,7 +293,7 @@ public class ProductController {
             product.setImages((String) params.get("images"));
 
             Product created = productService.create(product);
-            return ResponseEntity.ok(ApiResponse.success("发布成功", created));
+            return ResponseEntity.ok(ApiResponse.success("已提交审核，审核通过后将自动上架", created));
         } catch (ForbiddenException | BadRequestException e) {
             // 必须放在下面的兜底 catch 之前，否则会被吞成
             // 500「发布失败，请稍后重试」，用户永远看不到真正原因：
@@ -394,6 +415,33 @@ if (params.get("category") != null) product.setCategory((String) params.get("cat
             // 拼进响应体等于免费给攻击者做信息收集
             log.error("更新商品失败: id={}", id, e);
             return ResponseEntity.ok(ApiResponse.error(500, "更新失败，请稍后重试"));
+        }
+    }
+
+    /**
+     * 卖家把自己「审核未通过」的商品重新提交审核。
+     *
+     * <p>只有商品归属者本人、且当前 {@code review_status = 2（未通过）} 时可调用。
+     * 提交后回到待审核并清空上次拒绝理由与审核留痕，等待管理员再次审核。</p>
+     */
+    @PostMapping("/{id}/resubmit")
+    public ResponseEntity<ApiResponse<?>> resubmitForReview(
+            @PathVariable Long id,
+            @RequestHeader("Authorization") String authHeader) {
+        try {
+            Optional<User> userOpt = resolveUser(authHeader);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(401, "未登录或登录已过期"));
+            }
+            Product product = productReviewService.resubmit(id, userOpt.get().getId());
+            return ResponseEntity.ok(ApiResponse.success("已重新提交审核", product));
+        } catch (BadRequestException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.ok(ApiResponse.error(403, e.getMessage()));
+        } catch (Exception e) {
+            log.error("重新提交商品审核失败: id={}", id, e);
+            return ResponseEntity.ok(ApiResponse.error(500, "提交失败，请稍后重试"));
         }
     }
 

@@ -14,6 +14,15 @@ public class Category {
     @TableField("name")
     private String name;
 
+    /**
+     * 分类标识（英文 slug），商品表的 {@code products.category} 存的就是它。
+     *
+     * <p>名称可以随便改，标识一经创建不可修改——商品正是按它归属分类的。
+     * 数据库有唯一索引，重复会在插入时被拒。</p>
+     */
+    @TableField("code")
+    private String code;
+
     @TableField("description")
     private String description;
 
@@ -42,6 +51,9 @@ public class Category {
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+
+    public String getCode() { return code; }
+    public void setCode(String code) { this.code = code; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }

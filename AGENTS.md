@@ -22,13 +22,15 @@
 
 **项目没有 Flyway / Liquibase。** 迁移靠手工执行 SQL 文件。
 
-- `src\main\resources\*.sql` 中有 **14 个 `migration-*.sql`**，需**手工**在数据库执行。
+- `src\main\resources\*.sql` 中有 **18 个 `migration-*.sql`**，需**手工**在数据库执行。
 - `application.properties` 的 `spring.sql.init.schema-locations=classpath:plaza-schema.sql`
   只会在启动时**自动执行 `plaza-schema.sql` 一个文件**，其余 migration 一概不自动跑。
 - ⇒ **改了实体字段却没跑对应 migration，就会直接抛 "Unknown column"。改 schema 必须先跑 SQL。**
 
 已存在的迁移：`browse_history` / `cart` / `payment_record` / `plaza-posts` / `product-condition` / `report` / `status-semantics` / `student-review` / `user-email-unique` / `order-checkout`
-/ `order-unique-active`（商品未取消订单的唯一约束；脚本第 1 步先查重，为空才继续） / `seller-balance`（`users.balance` + `account_flow`；**确认收货放款依赖它，不跑则确认收货必失败**） / `order-hide-flags`（买家/卖家各自隐藏，纯增量） / `student-screenshot`（**学生认证申请表 `student_verification`**，支付宝截图辅助认证的申请与人工审核留痕；不跑则该功能报 "Table doesn't exist"）。
+/ `order-unique-active`（商品未取消订单的唯一约束；脚本第 1 步先查重，为空才继续） / `seller-balance`（`users.balance` + `account_flow`；**确认收货放款依赖它，不跑则确认收货必失败**） / `order-hide-flags`（买家/卖家各自隐藏，纯增量） / `student-screenshot`（**学生认证申请表 `student_verification`**，支付宝截图辅助认证的申请与人工审核留痕；不跑则该功能报 "Table doesn't exist"）
+/ `product-review`（`products.review_status/review_reason/reviewed_by/reviewed_time`；**商品人工审核依赖它，不跑则商品列表报 "Unknown column"**）
+/ `category-code`（`categories.code` 唯一标识，与 `products.category` 存的 slug 对齐；**不跑则后台分类管理、用户端分类下拉全部报错**）。
 
 > `plaza-schema.sql` 里的 `ALTER TABLE orders ADD COLUMN seller_income` **不幂等**，
 > 所以 `spring.sql.init.continue-on-error=true` 是必需的，不是随手打开的；

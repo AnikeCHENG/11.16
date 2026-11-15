@@ -27,7 +27,12 @@ public class CategoryController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<?>> getAllCategories() {
-        List<Category> categories = categoryRepository.selectList(null);
+        // 只返回启用分类，并按后台维护的排序展示；
+        // 此前返回整表（含停用项）且顺序由数据库决定，前端也没在读这个接口。
+        List<Category> categories = categoryRepository.selectList(
+                new QueryWrapper<Category>()
+                        .eq("status", 1)
+                        .orderByAsc("sort_order", "id"));
         return ResponseEntity.ok(ApiResponse.success("获取成功", categories));
     }
 

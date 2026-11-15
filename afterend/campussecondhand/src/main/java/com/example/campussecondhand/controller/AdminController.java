@@ -8,6 +8,7 @@ import com.example.campussecondhand.common.PageResult;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.example.campussecondhand.entity.User;
 import com.example.campussecondhand.enums.OrderStatus;
+import com.example.campussecondhand.enums.ProductReviewStatus;
 import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.entity.Product;
 import com.example.campussecondhand.entity.Order;
@@ -16,6 +17,7 @@ import com.example.campussecondhand.entity.Category;
 import com.example.campussecondhand.exception.BadRequestException;
 import com.example.campussecondhand.service.PenaltyService;
 import com.example.campussecondhand.service.OrderService;
+import com.example.campussecondhand.service.ProductReviewService;
 import com.example.campussecondhand.entity.Report;
 import com.example.campussecondhand.entity.StudentVerification;
 import com.example.campussecondhand.service.ReportService;
@@ -64,6 +66,9 @@ public class AdminController {
 
     @Autowired
     private PenaltyService penaltyService;
+
+    @Autowired
+    private ProductReviewService productReviewService;
 
     @Autowired
     private ReportService reportService;
@@ -209,6 +214,7 @@ User user = userRepository.selectById(id);
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) Integer status,
+            @RequestParam(required = false) Integer reviewStatus,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         // 分页参数统一校验：page<1 或 size 越界直接 400，不再静默纠正
@@ -223,6 +229,9 @@ com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Product> wrapper = n
         }
         if (status != null) {
             wrapper.eq("status", status);
+        }
+        if (reviewStatus != null) {
+            wrapper.eq("review_status", reviewStatus);
         }
         wrapper.orderByDesc("created_time", "id");
 
@@ -259,6 +268,61 @@ Product product = productRepository.selectById(id);
             // 保持与重构前一致的 HTTP 200 + code=400 语义
             return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
         }
+    }
+
+    /**
+     * 审核单件商品：{@code approve} 通过上架 / {@code reject} 拒绝并要求填写理由。
+     *
+     * <p>审核通过会同时把 {@code review_status} 置为已通过、{@code status} 置为在售；
+     * 拒绝则保持下架并记录理由，卖家可修改后重新提交。</p>
+     */
+    @PutMapping("/products/{id}/review")
+    public ResponseEntity<ApiResponse<?>> reviewProduct(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> params) {
+        try {
+            Object rawAction = params.get("action");
+            String action = rawAction == null ? null : String.valueOf(rawAction);
+            Object rawReason = params.get("reason");
+            String reason = rawReason == null ? null : String.valueOf(rawReason);
+            Product product = productReviewService.review(id, action, reason, currentUserId(authHeader));
+            boolean rejected = ProductReviewStatus.fromCode(product.getReviewStatus())
+                    == ProductReviewStatus.REJECTED;
+            return ResponseEntity.ok(ApiResponse.success(rejected ? "已拒绝" : "审核通过", product));
+        } catch (BadRequestException e) {
+            return ResponseEntity.ok(ApiResponse.error(400, e.getMessage()));
+        }
+    }
+
+    /**
+     * 批量通过商品审核。
+     *
+     * <p>只提供批量「通过」：拒绝必须逐条填写理由，批量拒绝无法给出有意义的原因，
+     * 卖家也就无从修改。单次上限与其它批量接口一致。</p>
+     */
+    @PutMapping("/products/batch/review")
+    public ResponseEntity<ApiResponse<?>> batchApproveProducts(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody Map<String, Object> params) {
+        Object rawIds = params.get("ids");
+        if (!(rawIds instanceof List<?> idList) || idList.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.error(400, "ids 必须是数组且不能为空"));
+        }
+        if (idList.size() > BATCH_UPDATE_LIMIT) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "一次最多批量审核 " + BATCH_UPDATE_LIMIT + " 件商品"));
+        }
+        List<Long> ids = new ArrayList<>();
+        for (Object rawId : idList) {
+            try {
+                ids.add(Long.valueOf(String.valueOf(rawId).trim()));
+            } catch (NumberFormatException e) {
+                return ResponseEntity.ok(ApiResponse.error(400, "商品 id 必须是数字"));
+            }
+        }
+        Map<String, Integer> result = productReviewService.batchApprove(ids, currentUserId(authHeader));
+        return ResponseEntity.ok(ApiResponse.success("批量审核完成", result));
     }
 
     // 批量更新商品状态
@@ -310,6 +374,12 @@ Product product = productRepository.selectById(id);
             }
             Product product = productRepository.selectById(id);
             if (product != null) {
+                // 与单件上架同一门禁：未通过审核的商品不能借批量接口绕过审核
+                if (target == ProductStatus.ON_SALE
+                        && !ProductReviewStatus.isApproved(product.getReviewStatus())) {
+                    skippedCount++;
+                    continue;
+                }
                 product.setStatus(target.getCode());
                 productRepository.updateById(product);
                 updatedCount++;
@@ -624,82 +694,153 @@ Message message = messageRepository.selectById(id);
 
     // ==================== 分类管理 ====================
 
-    // 获取所有分类
+    /** 分类标识（商品表存的就是这个 slug）：小写字母开头，允许数字/下划线/连字符，2~50 字符 */
+    private static final java.util.regex.Pattern CATEGORY_CODE_PATTERN =
+            java.util.regex.Pattern.compile("^[a-z][a-z0-9_-]{1,49}$");
+
+    // 获取所有分类（含真实商品数与启停状态）
     @GetMapping("/categories")
     public ResponseEntity<ApiResponse<?>> getAllCategories(
             @RequestHeader("Authorization") String authHeader) {
-List<Category> categories = categoryRepository.selectList(null);
-        
-        // 为每个分类添加商品数量
-        List<Map<String, Object>> categoriesWithCount = new ArrayList<>();
+        List<Category> categories = categoryRepository.selectList(
+                new QueryWrapper<Category>().orderByAsc("sort_order", "id"));
+
+        List<Map<String, Object>> result = new ArrayList<>();
         for (Category category : categories) {
-            Map<String, Object> categoryMap = new HashMap<>();
-            categoryMap.put("id", category.getId());
-            categoryMap.put("name", category.getName());
-            
-            // 统计该分类下的商品数量
-            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Product> productWrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
-            productWrapper.eq("category", category.getName());
-            int productCount = productRepository.selectList(productWrapper).size();
-            categoryMap.put("productCount", productCount);
-            
-            categoriesWithCount.add(categoryMap);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", category.getId());
+            row.put("code", category.getCode());
+            row.put("name", category.getName());
+            row.put("description", category.getDescription());
+            row.put("icon", category.getIcon());
+            row.put("parentId", category.getParentId());
+            row.put("sortOrder", category.getSortOrder());
+            row.put("status", category.getStatus());
+            // 商品表存的是 code（slug），旧实现按中文 name 统计，因此永远显示 0。
+            // 这是「后台分类管理看起来没起作用」的根因之一。
+            long productCount = category.getCode() == null ? 0
+                    : productRepository.selectCount(new QueryWrapper<Product>()
+                            .eq("category", category.getCode()));
+            row.put("productCount", productCount);
+            result.add(row);
         }
-        
-        return ResponseEntity.ok(ApiResponse.success("获取成功", categoriesWithCount));
+
+        return ResponseEntity.ok(ApiResponse.success("获取成功", result));
     }
 
     // 添加分类
     @PostMapping("/categories")
     public ResponseEntity<ApiResponse<?>> addCategory(
             @RequestHeader("Authorization") String authHeader,
-            @RequestBody Map<String, String> params) {
-String name = params.get("name");
-        if (name == null || name.isEmpty()) {
+            @RequestBody Map<String, Object> params) {
+        String name = text(params.get("name"));
+        if (name.isEmpty()) {
             return ResponseEntity.ok(ApiResponse.error(400, "分类名称不能为空"));
+        }
+        String code = text(params.get("code")).toLowerCase();
+        if (!CATEGORY_CODE_PATTERN.matcher(code).matches()) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "分类标识须以小写字母开头，只能包含字母/数字/下划线/连字符，长度 2~50"));
+        }
+        if (categoryRepository.selectCount(new QueryWrapper<Category>().eq("code", code)) > 0) {
+            return ResponseEntity.ok(ApiResponse.error(400, "分类标识已存在"));
         }
 
         Category category = new Category();
         category.setName(name);
+        category.setCode(code);
+        category.setDescription(textOrNull(params.get("description")));
+        category.setSortOrder(intOr(params.get("sortOrder"), 0));
+        category.setStatus(intOr(params.get("status"), 1));
         categoryRepository.insert(category);
 
         return ResponseEntity.ok(ApiResponse.success("添加成功", category));
     }
 
-    // 更新分类
+    // 更新分类：code 不可修改，商品按它归属；改名不影响已有商品
     @PutMapping("/categories/{id}")
     public ResponseEntity<ApiResponse<?>> updateCategory(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable Long id,
-            @RequestBody Map<String, String> params) {
-String name = params.get("name");
-        if (name == null || name.isEmpty()) {
-            return ResponseEntity.ok(ApiResponse.error(400, "分类名称不能为空"));
-        }
-
+            @RequestBody Map<String, Object> params) {
         Category category = categoryRepository.selectById(id);
         if (category == null) {
             return ResponseEntity.ok(ApiResponse.error(404, "分类不存在"));
         }
 
-        category.setName(name);
+        String code = text(params.get("code"));
+        if (!code.isEmpty() && !code.equalsIgnoreCase(category.getCode())) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "分类标识不可修改；如需更换标识，请新建分类并迁移商品"));
+        }
+        if (params.containsKey("name")) {
+            String name = text(params.get("name"));
+            if (name.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(400, "分类名称不能为空"));
+            }
+            category.setName(name);
+        }
+        if (params.containsKey("description")) {
+            category.setDescription(textOrNull(params.get("description")));
+        }
+        if (params.containsKey("sortOrder")) {
+            category.setSortOrder(intOr(params.get("sortOrder"), category.getSortOrder()));
+        }
+        if (params.containsKey("status")) {
+            Integer status = intOr(params.get("status"), category.getStatus());
+            if (status == null || (status != 0 && status != 1)) {
+                return ResponseEntity.ok(ApiResponse.error(400, "分类状态只能是 0（停用）或 1（启用）"));
+            }
+            category.setStatus(status);
+        }
         categoryRepository.updateById(category);
 
         return ResponseEntity.ok(ApiResponse.success("更新成功", category));
     }
 
-    // 删除分类
+    // 删除分类：仍有商品使用该分类时拒绝删除，避免商品变孤儿
     @DeleteMapping("/categories/{id}")
     public ResponseEntity<ApiResponse<?>> deleteCategory(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable Long id) {
-Category category = categoryRepository.selectById(id);
+        Category category = categoryRepository.selectById(id);
         if (category == null) {
             return ResponseEntity.ok(ApiResponse.error(404, "分类不存在"));
         }
 
+        long inUse = category.getCode() == null ? 0
+                : productRepository.selectCount(new QueryWrapper<Product>()
+                        .eq("category", category.getCode()));
+        if (inUse > 0) {
+            return ResponseEntity.ok(ApiResponse.error(400,
+                    "该分类下还有 " + inUse + " 件商品，请先迁移或停用分类"));
+        }
+
         categoryRepository.deleteById(id);
         return ResponseEntity.ok(ApiResponse.success("删除成功", null));
+    }
+
+    /** 参数转字符串并 trim；null 视为空串 */
+    private static String text(Object raw) {
+        return raw == null ? "" : String.valueOf(raw).trim();
+    }
+
+    /** 空串归一为 null，避免数据库里同时存在 NULL 与 "" 两种空值 */
+    private static String textOrNull(Object raw) {
+        String value = text(raw);
+        return value.isEmpty() ? null : value;
+    }
+
+    /** 宽松整数解析：缺省或非法时用兜底值 */
+    private static Integer intOr(Object raw, Integer fallback) {
+        if (raw == null || String.valueOf(raw).isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.valueOf(String.valueOf(raw).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
 // ==================== 数据统计 ====================
@@ -726,6 +867,10 @@ Category category = categoryRepository.selectById(id);
         QueryWrapper<Product> sold = new QueryWrapper<>();
         sold.eq("status", ProductStatus.SOLD.getCode());
         stats.put("soldProductCount", productRepository.selectCount(sold));
+        // 待审核数量：管理后台菜单/首页红点用，避免管理员漏审
+        QueryWrapper<Product> pendingReview = new QueryWrapper<>();
+        pendingReview.eq("review_status", ProductReviewStatus.PENDING.getCode());
+        stats.put("pendingReviewProductCount", productRepository.selectCount(pendingReview));
 
         return ResponseEntity.ok(ApiResponse.success("获取成功", stats));
     }

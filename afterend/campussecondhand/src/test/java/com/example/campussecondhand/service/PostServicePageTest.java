@@ -117,4 +117,41 @@ class PostServicePageTest {
         verify(userRepository).selectBatchIds(captor.capture());
         assertThat(captor.getValue()).containsExactly(9L);
     }
+
+    @Test
+    @DisplayName("未通过审核的商品不在动态里展示商品卡片（动态正文仍保留）")
+    void hides_unapproved_product_snapshot() {
+        Post pendingPost = new Post();
+        pendingPost.setId(1L);
+        pendingPost.setType("SELL");
+        pendingPost.setUserId(9L);
+        pendingPost.setProductId(100L);
+        Post approvedPost = new Post();
+        approvedPost.setId(2L);
+        approvedPost.setType("SELL");
+        approvedPost.setUserId(9L);
+        approvedPost.setProductId(101L);
+
+        Page<Post> page = new Page<>(1, 10, 2);
+        page.setRecords(List.of(pendingPost, approvedPost));
+        when(postRepository.selectPage(any(), any())).thenReturn(page);
+        when(userRepository.selectBatchIds(any())).thenReturn(List.of());
+
+        com.example.campussecondhand.entity.Product pending =
+                new com.example.campussecondhand.entity.Product();
+        pending.setId(100L);
+        pending.setReviewStatus(com.example.campussecondhand.enums.ProductReviewStatus.PENDING.getCode());
+        com.example.campussecondhand.entity.Product approved =
+                new com.example.campussecondhand.entity.Product();
+        approved.setId(101L);
+        approved.setReviewStatus(com.example.campussecondhand.enums.ProductReviewStatus.APPROVED.getCode());
+        when(productRepository.selectBatchIds(any())).thenReturn(List.of(pending, approved));
+
+        IPage<Post> result = postService.page(null, PageParam.of(1, 10));
+
+        assertThat(result.getRecords()).hasSize(2);
+        assertThat(result.getRecords().get(0).getProduct()).isNull();
+        assertThat(result.getRecords().get(1).getProduct()).isNotNull();
+        assertThat(result.getRecords().get(1).getProduct().getId()).isEqualTo(101L);
+    }
 }

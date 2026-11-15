@@ -17,18 +17,14 @@
         />
         <select v-model="categoryFilter" class="filter-select" @change="handleFilterChange">
           <!--
-            value 必须与库里存的一致：ProductService.autoCategorize 与 PostProduct.vue
-            写入的是 books / electronics 这类英文键，中文只是展示名。
-            此前 value 直接写中文，eq("category", "电子产品") 永远匹配不到任何一行。
+            value 必须与库里存的一致：products.category 存的是 books / electronics 这类
+            code（slug），中文只是分类表里的展示名。选项来自后台分类管理维护的
+            /api/admin/categories，新增分类后这里自动出现，不用再改代码。
           -->
           <option value="">所有分类</option>
-          <option value="books">教材书籍</option>
-          <option value="electronics">电子产品</option>
-          <option value="transport">出行工具</option>
-          <option value="gaming">游戏数码</option>
-          <option value="clothing">服饰穿搭</option>
-          <option value="living">生活用品</option>
-          <option value="other">其他</option>
+          <option v-for="cat in categoryOptions" :key="cat.code" :value="cat.code">
+            {{ cat.name }}
+          </option>
         </select>
         <select v-model="statusFilter" class="filter-select" @change="handleFilterChange">
           <!-- 语义以 ProductStatus 枚举为准：0=已下架 1=在售 2=已售出 -->
@@ -37,7 +33,21 @@
           <option :value="2">已售出</option>
           <option :value="0">已下架</option>
         </select>
+        <select v-model="reviewFilter" class="filter-select" @change="handleFilterChange">
+          <!-- 审核是独立维度：0=待审核 1=已通过 2=未通过 -->
+          <option value="">全部审核状态</option>
+          <option :value="0">待审核</option>
+          <option :value="2">未通过</option>
+          <option :value="1">已通过</option>
+        </select>
         <button class="search-button" @click="handleSearch">搜索</button>
+        <button
+          class="batch-approve-button"
+          :disabled="selectedReviewableIds.length === 0 || batchSubmitting"
+          @click="batchApprove"
+        >
+          批量通过{{ selectedReviewableIds.length ? `（${selectedReviewableIds.length}）` : '' }}
+        </button>
       </div>
     </div>
     
@@ -54,11 +64,21 @@
       <table v-else class="products-table">
         <thead>
           <tr>
+            <th class="check-col">
+              <input
+                type="checkbox"
+                :checked="allReviewableSelected"
+                :disabled="reviewableOnPage.length === 0"
+                title="全选本页待审核/未通过商品"
+                @change="toggleSelectAll($event.target.checked)"
+              />
+            </th>
             <th>ID</th>
             <th>标题</th>
             <th>卖家</th>
             <th>价格</th>
             <th>分类</th>
+            <th>审核</th>
             <th>状态</th>
             <th>创建时间</th>
             <th>操作</th>
@@ -66,14 +86,35 @@
         </thead>
         <tbody>
           <tr v-if="products.length === 0">
-            <td colspan="8" class="empty-cell">没有找到匹配的商品</td>
+            <td colspan="10" class="empty-cell">没有找到匹配的商品</td>
           </tr>
           <tr v-for="product in products" :key="product.id">
+            <td class="check-col">
+              <input
+                v-if="canReview(product)"
+                type="checkbox"
+                :value="product.id"
+                :checked="selectedIds.includes(product.id)"
+                @change="toggleSelect(product.id)"
+              />
+            </td>
             <td>{{ product.id }}</td>
             <td class="product-title">{{ product.title }}</td>
             <td>{{ product.userId }}</td>
             <td>¥{{ product.price }}</td>
             <td>{{ product.category || '未分类' }}</td>
+            <td>
+              <span class="review-badge" :class="getReviewClass(product.reviewStatus)">
+                {{ getReviewText(product.reviewStatus) }}
+              </span>
+              <span
+                v-if="product.reviewStatus === 2 && product.reviewReason"
+                class="review-reason"
+                :title="product.reviewReason"
+              >
+                {{ product.reviewReason }}
+              </span>
+            </td>
             <td>
               <span class="status-badge" :class="getStatusClass(product.status)">
                 {{ getStatusText(product.status) }}
@@ -89,7 +130,24 @@
                 >
                   详情
                 </button>
+                <template v-if="canReview(product)">
+                  <button
+                    class="action-button action-approve"
+                    :disabled="reviewSubmittingId === product.id"
+                    @click="approveProduct(product)"
+                  >
+                    通过
+                  </button>
+                  <button
+                    class="action-button action-reject"
+                    :disabled="reviewSubmittingId === product.id"
+                    @click="openRejectDialog(product)"
+                  >
+                    拒绝
+                  </button>
+                </template>
                 <button 
+                  v-else
                   class="action-button" 
                   :class="getActionClass(product.status)"
                   @click="toggleProductStatus(product.id, product.status)"
@@ -184,6 +242,18 @@
               <span class="detail-value">{{ getStatusText(selectedProduct.status) }}</span>
             </div>
             <div class="detail-row">
+              <span class="detail-label">审核:</span>
+              <span class="detail-value">{{ getReviewText(selectedProduct.reviewStatus) }}</span>
+            </div>
+            <div v-if="selectedProduct.reviewReason" class="detail-row">
+              <span class="detail-label">拒绝理由:</span>
+              <span class="detail-value">{{ selectedProduct.reviewReason }}</span>
+            </div>
+            <div v-if="selectedProduct.reviewedTime" class="detail-row">
+              <span class="detail-label">审核时间:</span>
+              <span class="detail-value">{{ formatDate(selectedProduct.reviewedTime) }}</span>
+            </div>
+            <div class="detail-row">
               <span class="detail-label">浏览次数:</span>
               <span class="detail-value">{{ selectedProduct.viewCount || 0 }}</span>
             </div>
@@ -206,11 +276,45 @@
         </div>
       </div>
     </div>
+
+    <!-- 拒绝审核：必须填写理由，卖家据此修改后重新提交 -->
+    <div v-if="rejectTarget" class="modal-overlay" @click.self="closeRejectDialog">
+      <div class="modal-content reject-modal">
+        <div class="modal-header">
+          <h2>拒绝审核</h2>
+          <button class="close-button" @click="closeRejectDialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="reject-target">商品：{{ rejectTarget.title }}（ID {{ rejectTarget.id }}）</p>
+          <label class="reject-label" for="reject-reason">拒绝理由（必填，卖家可见）</label>
+          <textarea
+            id="reject-reason"
+            v-model="rejectReason"
+            class="reject-textarea"
+            rows="4"
+            maxlength="255"
+            placeholder="例如：商品图片与描述不符，请补充实拍图后重新提交"
+          ></textarea>
+          <div class="reject-counter">{{ rejectReason.length }} / 255</div>
+        </div>
+        <div class="modal-footer">
+          <button class="cancel-modal-button" @click="closeRejectDialog">取消</button>
+          <button
+            class="confirm-reject-button"
+            :disabled="!rejectReason.trim() || rejectSubmitting"
+            @click="submitReject"
+          >
+            {{ rejectSubmitting ? '提交中…' : '确认拒绝' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import admin from '../../api/admin'
 
 const products = ref([])
@@ -219,15 +323,54 @@ const error = ref('')
 const searchQuery = ref('')
 const categoryFilter = ref('')
 const statusFilter = ref('')
+/** 审核状态筛选：'' 全部 / 0 待审核 / 1 已通过 / 2 未通过 */
+const reviewFilter = ref('')
 const page = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const showDetailModal = ref(false)
 const selectedProduct = ref(null)
+/** 分类筛选项，来自后台分类管理（含停用项，便于排查历史商品） */
+const categoryOptions = ref([])
+
+/** 批量通过选中的商品 id（只允许勾选待审核/未通过的商品） */
+const selectedIds = ref([])
+const batchSubmitting = ref(false)
+/** 单条审核进行中的商品 id，用于禁用按钮防重复点击 */
+const reviewSubmittingId = ref(null)
+
+/** 拒绝弹窗状态 */
+const rejectTarget = ref(null)
+const rejectReason = ref('')
+const rejectSubmitting = ref(false)
 
 const totalPages = computed(() => {
   return Math.ceil(total.value / pageSize.value)
 })
+
+/** 当前页可审核（待审核或未通过）的商品 */
+const reviewableOnPage = computed(() => products.value.filter(canReview))
+
+const allReviewableSelected = computed(() => {
+  const list = reviewableOnPage.value
+  return list.length > 0 && list.every(p => selectedIds.value.includes(p.id))
+})
+
+/** 实际会被提交的 id：过滤掉翻页后已不在当前页/已变为已通过的选择 */
+const selectedReviewableIds = computed(() => {
+  const reviewable = new Set(reviewableOnPage.value.map(p => p.id))
+  return selectedIds.value.filter(id => reviewable.has(id))
+})
+
+/**
+ * 该商品当前是否可审核。
+ *
+ * <p>只有待审核(0)与未通过(2)可审：已通过的商品重复审核没有意义，
+ * 后端也会直接 400。前端隐藏按钮避免管理员点出一堆报错。</p>
+ */
+function canReview(product) {
+  return product.reviewStatus === 0 || product.reviewStatus === 2
+}
 
 const fetchProducts = async () => {
   try {
@@ -241,10 +384,13 @@ const fetchProducts = async () => {
     if (search) params.search = search
     if (categoryFilter.value) params.category = categoryFilter.value
     if (statusFilter.value !== '') params.status = statusFilter.value
+    if (reviewFilter.value !== '') params.reviewStatus = reviewFilter.value
     const response = await admin.get('/products', { params })
     if (response.data.code === 200) {
       products.value = response.data.data.list
       total.value = response.data.data.total
+      // 翻页/筛选后旧的选择已经不在列表里，留着会让批量按钮显示错误的件数
+      selectedIds.value = []
     } else {
       error.value = response.data.message || '获取商品列表失败'
     }
@@ -259,6 +405,18 @@ const fetchProducts = async () => {
 const handleSearch = () => {
   page.value = 1
   fetchProducts()
+}
+
+/** 分类筛选项随分类管理变化，不写死在前端 */
+const fetchCategoryOptions = async () => {
+  try {
+    const response = await admin.get('/categories')
+    if (response.data.code === 200) {
+      categoryOptions.value = (response.data.data || []).filter(c => c.code)
+    }
+  } catch (err) {
+    console.error('获取分类选项失败:', err)
+  }
 }
 
 const handleFilterChange = () => {
@@ -296,8 +454,112 @@ const toggleProductStatus = async (productId, currentStatus) => {
       alert('状态更新失败: ' + (response.data.message || '未知错误'))
     }
   } catch (err) {
+    // 未通过审核的商品上架会被后端拦截（interceptor 已弹出原因），
+    // 这里补一句操作指引，避免管理员反复尝试
     console.error('更新商品状态失败:', err)
-    alert('网络错误，请检查网络连接')
+    if (!err?.response) {
+      ElMessage.warning('若商品尚未通过审核，请先在上方「审核」列点击「通过」')
+    }
+  }
+}
+
+/* ==================== 人工审核 ==================== */
+
+function toggleSelect(productId) {
+  const idx = selectedIds.value.indexOf(productId)
+  if (idx === -1) {
+    selectedIds.value.push(productId)
+  } else {
+    selectedIds.value.splice(idx, 1)
+  }
+}
+
+function toggleSelectAll(checked) {
+  selectedIds.value = checked ? reviewableOnPage.value.map(p => p.id) : []
+}
+
+/** 单条通过：审核通过后商品自动上架 */
+async function approveProduct(product) {
+  reviewSubmittingId.value = product.id
+  try {
+    const response = await admin.put(`/products/${product.id}/review`, { action: 'approve' })
+    if (response.data.code === 200) {
+      ElMessage.success(`「${product.title}」已通过审核并上架`)
+      await fetchProducts()
+    }
+  } catch (err) {
+    console.error('审核通过失败:', err)
+  } finally {
+    reviewSubmittingId.value = null
+  }
+}
+
+function openRejectDialog(product) {
+  rejectTarget.value = product
+  rejectReason.value = ''
+}
+
+function closeRejectDialog() {
+  rejectTarget.value = null
+  rejectReason.value = ''
+}
+
+/** 拒绝：理由必填（后端同样校验），提交后商品保持下架 */
+async function submitReject() {
+  const reason = rejectReason.value.trim()
+  if (!reason) {
+    ElMessage.warning('请填写拒绝理由，卖家需要知道该改什么')
+    return
+  }
+  rejectSubmitting.value = true
+  try {
+    const response = await admin.put(`/products/${rejectTarget.value.id}/review`, {
+      action: 'reject',
+      reason
+    })
+    if (response.data.code === 200) {
+      ElMessage.success('已拒绝，卖家可修改后重新提交')
+      closeRejectDialog()
+      await fetchProducts()
+    }
+  } catch (err) {
+    console.error('审核拒绝失败:', err)
+  } finally {
+    rejectSubmitting.value = false
+  }
+}
+
+/** 批量通过：只处理待审核/未通过，已通过的会被后端跳过 */
+async function batchApprove() {
+  const ids = selectedReviewableIds.value
+  if (ids.length === 0) {
+    ElMessage.warning('请先勾选待审核或未通过的商品')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定通过选中的 ${ids.length} 件商品吗？通过后将立即在商品大厅上架。`,
+      '批量通过审核',
+      { type: 'warning', confirmButtonText: '全部通过', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  batchSubmitting.value = true
+  try {
+    const response = await admin.put('/products/batch/review', { ids })
+    if (response.data.code === 200) {
+      const result = response.data.data || {}
+      ElMessage.success(
+        `已通过 ${result.approvedCount ?? 0} 件` +
+        (result.skippedCount ? `，跳过 ${result.skippedCount} 件（已审核或不存在）` : '')
+      )
+      await fetchProducts()
+    }
+  } catch (err) {
+    console.error('批量审核失败:', err)
+  } finally {
+    batchSubmitting.value = false
   }
 }
 
@@ -357,6 +619,34 @@ const getStatusClass = (status) => {
   }
 }
 
+/** 审核状态文案：0=待审核 1=已通过 2=未通过（与 ProductReviewStatus 一致） */
+const getReviewText = (reviewStatus) => {
+  switch (reviewStatus) {
+    case 0:
+      return '待审核'
+    case 1:
+      return '已通过'
+    case 2:
+      return '未通过'
+    default:
+      // 历史数据未写 review_status 时后端默认 1，这里兜底成已通过
+      return reviewStatus == null ? '已通过' : '未知'
+  }
+}
+
+const getReviewClass = (reviewStatus) => {
+  switch (reviewStatus) {
+    case 0:
+      return 'review-pending'
+    case 1:
+      return 'review-approved'
+    case 2:
+      return 'review-rejected'
+    default:
+      return reviewStatus == null ? 'review-approved' : ''
+  }
+}
+
 const getStatusAction = (status) => {
   switch (status) {
     case 0:
@@ -391,6 +681,7 @@ const formatDate = (dateString) => {
 
 onMounted(() => {
   fetchProducts()
+  fetchCategoryOptions()
 })
 </script>
 
@@ -609,6 +900,105 @@ onMounted(() => {
   color: #4b5563;
 }
 
+/* 审核标签 */
+.review-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.review-pending {
+  background-color: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.review-approved {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+
+.review-rejected {
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+/* 拒绝理由可能是长句，限两行并保留完整内容在 title 中 */
+.review-reason {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 180px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #b91c1c;
+  line-height: 1.4;
+}
+
+/* 批量通过按钮：默认次要样式，有选中项时变主色 */
+.batch-approve-button {
+  padding: 10px 18px;
+  border: 1px solid #4CAF50;
+  border-radius: 6px;
+  background: #fff;
+  color: #2e7d32;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.batch-approve-button:hover:not(:disabled) {
+  background: #4CAF50;
+  color: #fff;
+}
+
+.batch-approve-button:disabled {
+  border-color: #ddd;
+  color: #aaa;
+  cursor: not-allowed;
+}
+
+.check-col {
+  width: 36px;
+  text-align: center;
+}
+
+.check-col input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* 通过/拒绝按钮与上下架按钮区分开，避免误点 */
+.action-approve {
+  background-color: rgba(16, 185, 129, 0.14);
+  color: #059669;
+}
+
+.action-approve:hover:not(:disabled) {
+  background-color: #059669;
+  color: #fff;
+}
+
+.action-reject {
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.action-reject:hover:not(:disabled) {
+  background-color: #dc2626;
+  color: #fff;
+}
+
+.action-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* 操作按钮 */
 .action-buttons {
   display: flex;
@@ -806,6 +1196,83 @@ onMounted(() => {
   transform: translateY(-1px);
 }
 
+/* ---- 拒绝审核弹窗 ---- */
+.reject-modal {
+  max-width: 520px;
+  width: 100%;
+}
+
+.reject-target {
+  margin: 0 0 16px;
+  color: #555;
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.reject-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.reject-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.6;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.reject-textarea:focus {
+  outline: none;
+  border-color: #4CAF50;
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.12);
+}
+
+.reject-counter {
+  margin-top: 6px;
+  text-align: right;
+  font-size: 12px;
+  color: #999;
+}
+
+.cancel-modal-button {
+  padding: 10px 20px;
+  margin-right: 10px;
+  background-color: #f5f5f5;
+  color: #333;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.cancel-modal-button:hover {
+  background-color: #e0e0e0;
+}
+
+.confirm-reject-button {
+  padding: 10px 20px;
+  background-color: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.confirm-reject-button:disabled {
+  background-color: #f0a3a3;
+  cursor: not-allowed;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .admin-products {
@@ -884,6 +1351,28 @@ onMounted(() => {
 .action-button { padding: 5px 12px; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: var(--weight-medium); text-transform: none; letter-spacing: 0; border: 1px solid transparent; background: var(--surface-3); color: var(--text); }
 .view-button { background: var(--surface-3); color: var(--text); }
 .view-button:hover { background: var(--surface-2); }
+
+.review-badge { padding: 3px 10px; border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: var(--weight-medium); }
+.review-pending { background: var(--warning-soft); color: var(--warning); }
+.review-approved { background: var(--accent-soft); color: var(--accent); }
+.review-rejected { background: var(--danger-soft); color: var(--danger); }
+.review-reason { color: var(--danger); }
+
+.batch-approve-button { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius); font-size: var(--text-base); font-weight: var(--weight-medium); }
+.batch-approve-button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.batch-approve-button:disabled { border-color: var(--border); color: var(--text-3); }
+
+.action-approve { background: var(--accent-soft); color: var(--accent); }
+.action-approve:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.action-reject { background: var(--danger-soft); color: var(--danger); }
+.action-reject:hover:not(:disabled) { background: var(--danger); color: #fff; }
+
+.cancel-modal-button { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.cancel-modal-button:hover { background: var(--surface-2); }
+.confirm-reject-button { background: var(--danger); color: #fff; border-radius: var(--radius-sm); }
+.reject-label, .reject-target { color: var(--text); }
+.reject-textarea { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+.reject-counter { color: var(--text-3); }
 .action上架 { background: var(--accent-soft); color: var(--accent); }
 .action上架:hover { background: var(--accent); color: #fff; }
 .action下架 { background: var(--danger-soft); color: var(--danger); }

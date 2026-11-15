@@ -22,13 +22,9 @@
               <label class="field-label" for="p-cat">商品分类 <span class="required">*</span></label>
               <select id="p-cat" v-model="form.category" class="select" required>
                 <option value="">请选择分类</option>
-                <option value="books">教材书籍</option>
-                <option value="electronics">电子产品</option>
-                <option value="transport">出行工具</option>
-                <option value="gaming">游戏数码</option>
-                <option value="clothing">服饰穿搭</option>
-                <option value="living">生活用品</option>
-                <option value="other">其他</option>
+                <option v-for="cat in categoryOptions" :key="cat.value" :value="cat.value">
+                  {{ cat.label }}
+                </option>
               </select>
             </div>
 
@@ -145,8 +141,8 @@
             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
           </svg>
         </div>
-        <h2>发布成功！</h2>
-        <p>您的商品已成功发布，等待买家咨询</p>
+        <h2>已提交审核</h2>
+        <p>商品已提交人工审核，审核通过后将自动上架并出现在商品大厅</p>
         <div class="modal-actions">
           <button class="btn btn-outline" @click="go('/products')">返回商品列表</button>
           <button class="btn btn-primary" @click="continuePost">继续发布</button>
@@ -161,6 +157,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { createProduct } from '../api/product'
 import { uploadImage } from '../api/upload'
+import { categoryOptions, loadCategories } from '../utils/categories'
 
 const router = useRouter()
 const submitting = ref(false)
@@ -296,6 +293,7 @@ function saveDraft() {
 function continuePost() { showSuccess.value = false; resetForm() }
 
 onMounted(() => {
+  loadCategories()
   const draft = localStorage.getItem('product_draft')
   if (draft) { try { Object.assign(form, JSON.parse(draft)) } catch { console.log('读取草稿失败') } }
 })

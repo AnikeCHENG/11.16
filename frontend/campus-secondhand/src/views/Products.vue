@@ -137,7 +137,7 @@
         <div class="chip-row category-row">
           <button class="chip" :class="{ active: activeCategory === 'all' }" type="button" @click="selectCategory('all')">全部</button>
           <button
-            v-for="cat in categories"
+            v-for="cat in categoryOptions"
             :key="cat.value"
             class="chip"
             :class="{ active: activeCategory === cat.value }"
@@ -255,6 +255,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { getProductList } from '../api/product'
 import { firstImage } from '../utils/images'
+import { categoryOptions, loadCategories, categoryLabel as lookupCategoryLabel, categoryEmoji as lookupCategoryEmoji } from '../utils/categories'
 
 const router = useRouter()
 const route = useRoute()
@@ -294,34 +295,21 @@ const sortOptions = [
   { value: 'views', label: '浏览量最多' }
 ]
 
-const categories = [
-  { value: 'books', label: '教材书籍', emoji: '📚' },
-  { value: 'electronics', label: '电子产品', emoji: '💻' },
-  { value: 'transport', label: '出行工具', emoji: '🚲' },
-  { value: 'gaming', label: '游戏数码', emoji: '🎮' },
-  { value: 'clothing', label: '服饰穿搭', emoji: '👕' },
-  { value: 'living', label: '生活用品', emoji: '🧺' },
-  { value: 'other', label: '其他', emoji: '📦' }
-]
-
 /**
  * 分类代码转中文标签。
  *
- * <p>此前 chips（筛选行）用 categories 数组的中文 label，而商品卡片直接输出
- * 原始代码 {{ product.category }} —— 同一页面上「电子产品」和「electronics」
- * 并存。查表而不是各写一份 if-else，保证新增分类只改 categories 一处。</p>
- *
- * <p>查不到时回退到原值而非「其他」：数据里的未知分类仍应被看见，
+ * <p>分类数据来自后台维护的 /api/categories（经 utils/categories 缓存），
+ * 后台改名/新增会直接反映到这里；接口失败时回退本地默认列表。
+ * 查不到时回退到原值而非「其他」：数据里的未知分类仍应被看见，
  * 统一显示「其他」会让多个不同的未知分类混作一谈。</p>
  */
 function categoryLabel(code) {
-  if (!code) return '其他'
-  return categories.find(c => c.value === code)?.label || code
+  return lookupCategoryLabel(code)
 }
 
 /** 分类代码转 emoji，用于无图商品的占位。查不到时给中性 📦。 */
 function categoryEmoji(code) {
-  return categories.find(c => c.value === code)?.emoji || '📦'
+  return lookupCategoryEmoji(code)
 }
 
 const searchSuggestions = computed(() => {
@@ -464,6 +452,7 @@ function formatPrice(price) { if (!price) return '0'; return parseFloat(price).t
 function getStatusClass(status) { return ({ 0: 'badge', 1: 'badge-success', 2: 'badge-danger' })[status] || 'badge-success' }
 function getStatusText(status) { return ({ 0: '已下架', 1: '在售', 2: '已售' })[status] || '在售' }
 onMounted(() => {
+  loadCategories()
   loadSearchHistory()
   if (route.query.search) searchKeyword.value = route.query.search
   if (route.query.category) activeCategory.value = route.query.category

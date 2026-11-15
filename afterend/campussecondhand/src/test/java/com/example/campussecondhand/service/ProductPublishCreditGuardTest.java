@@ -1,5 +1,6 @@
 package com.example.campussecondhand.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -10,6 +11,8 @@ import static org.mockito.Mockito.when;
 
 import com.example.campussecondhand.entity.Post;
 import com.example.campussecondhand.entity.Product;
+import com.example.campussecondhand.enums.ProductReviewStatus;
+import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.exception.ForbiddenException;
 import com.example.campussecondhand.repository.CreditRepository;
 import com.example.campussecondhand.repository.PostRepository;
@@ -114,6 +117,17 @@ class ProductPublishCreditGuardTest {
 
         assertThatCode(() -> productService.create(newProduct())).doesNotThrowAnyException();
         verify(productRepository).insert(any(Product.class));
+    }
+
+    @Test
+    @DisplayName("新发布商品默认「待审核 + 下架」，不会绕过人工审核直接出现在大厅")
+    void new_product_starts_pending_and_off_shelf() {
+        givenScore(BOUNDARY_SCORE);
+
+        Product created = productService.create(newProduct());
+
+        assertThat(created.getReviewStatus()).isEqualTo(ProductReviewStatus.PENDING.getCode());
+        assertThat(created.getStatus()).isEqualTo(ProductStatus.OFF_SHELF.getCode());
     }
 
     /* ---------------- 路径二：广场卖货动态（修复前从这里绕过） ---------------- */

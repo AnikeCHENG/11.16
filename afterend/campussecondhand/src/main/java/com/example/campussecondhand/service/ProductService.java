@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.example.campussecondhand.common.PageParam;
 import com.example.campussecondhand.entity.Product;
+import com.example.campussecondhand.enums.ProductReviewStatus;
 import com.example.campussecondhand.enums.ProductStatus;
 import com.example.campussecondhand.exception.BadRequestException;
 import com.example.campussecondhand.exception.ForbiddenException;
@@ -179,8 +180,14 @@ public class ProductService {
         product.setCreatedTime(LocalDateTime.now());
         product.setUpdatedTime(LocalDateTime.now());
         product.setViewCount(0);
-        // 新发布商品默认在售
-        product.setStatus(ProductStatus.ON_SALE.getCode());
+        // 新发布商品进入人工审核：先置为下架，审核通过后由 ProductReviewService 上架。
+        // 复用既有 status 语义（下架商品不进大厅/购物车/下单），
+        // 因此公开列表、购物车、下单等读取路径无需改动即可自动拦截。
+        product.setStatus(ProductStatus.OFF_SHELF.getCode());
+        product.setReviewStatus(ProductReviewStatus.PENDING.getCode());
+        product.setReviewReason(null);
+        product.setReviewedBy(null);
+        product.setReviewedTime(null);
         
         // 自动分类
         if (product.getCategory() == null || product.getCategory().isEmpty()) {
@@ -268,6 +275,10 @@ public class ProductService {
     public boolean markAsOnSale(Long id) {
         Product product = productRepository.selectById(id);
         if (product != null) {
+            // 未通过审核的商品不允许恢复在售，否则订单取消等路径会绕过人工审核
+            if (!ProductReviewStatus.isApproved(product.getReviewStatus())) {
+                return false;
+            }
             product.setStatus(ProductStatus.ON_SALE.getCode());
             product.setSoldTime(null);
             product.setUpdatedTime(LocalDateTime.now());

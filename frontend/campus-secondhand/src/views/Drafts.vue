@@ -55,16 +55,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { categoryLabel, loadCategories } from '../utils/categories'
 
 const router = useRouter()
 const drafts = ref([])
 
-const categoryNames = {
-  books: '教材书籍', electronics: '电子产品', transport: '出行工具',
-  gaming: '游戏数码', clothing: '服饰穿搭', living: '生活用品', other: '其他'
-}
-
-function getCategoryName(category) { return categoryNames[category] || '其他' }
+/** 分类名来自后台维护的分类表；查不到回退原值，避免不同未知分类都显示「其他」 */
+function getCategoryName(category) { return category ? categoryLabel(category) : '未分类' }
 function formatDate(timestamp) {
   if (!timestamp) return '未知时间'
   const date = new Date(timestamp)
@@ -85,7 +82,10 @@ function clearAllDrafts() {
     drafts.value = []
   }
 }
-onMounted(() => { drafts.value = JSON.parse(localStorage.getItem('product_drafts') || '[]') })
+onMounted(() => {
+  loadCategories()
+  drafts.value = JSON.parse(localStorage.getItem('product_drafts') || '[]')
+})
 </script>
 
 <style scoped>

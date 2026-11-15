@@ -110,7 +110,7 @@ public class PostService {
         // 仅 SELL/FREE 且带 productInfo 时联动建商品
         if (type.isAllowsProduct() && hasProductInfo(cmd)) {
             Product product = buildProduct(userId, type, cmd);
-            // create() 内部已置 status=ON_SALE(1) 与自动分类
+            // create() 内部置为「待审核 + 下架」，管理员审核通过后才会在大厅/动态中展示
             productService.create(product);
             post.setProductId(product.getId());
         }
@@ -204,7 +204,16 @@ public class PostService {
         if (!productIds.isEmpty()) {
             Map<Long, Product> productMap = productRepository.selectBatchIds(productIds).stream()
                     .collect(Collectors.toMap(Product::getId, Function.identity()));
-            posts.forEach(p -> p.setProduct(productMap.get(p.getProductId())));
+            posts.forEach(p -> {
+                Product product = productMap.get(p.getProductId());
+                // 未通过人工审核的商品不对外展示商品卡片：
+                // 动态文字仍是用户内容，可以保留；商品信息在审核通过前不可见。
+                if (product != null
+                        && com.example.campussecondhand.enums.ProductReviewStatus
+                                .isApproved(product.getReviewStatus())) {
+                    p.setProduct(product);
+                }
+            });
         }
 
         // 互动计数：只对商品类动态（productId 非空）统计。

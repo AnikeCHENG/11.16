@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS categories (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     name VARCHAR(50) NOT NULL COMMENT '分类名称',
+    code VARCHAR(50) NOT NULL COMMENT '分类标识（products.category 存的即此值）',
     description VARCHAR(200) DEFAULT NULL COMMENT '分类描述',
     parent_id BIGINT DEFAULT NULL COMMENT '父分类ID',
     icon VARCHAR(500) DEFAULT NULL COMMENT '分类图标',
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS categories (
     created_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_categories_code (code),
     KEY idx_parent_id (parent_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='分类表';
 
@@ -54,13 +56,18 @@ CREATE TABLE IF NOT EXISTS products (
     images MEDIUMTEXT DEFAULT NULL COMMENT '图片(逗号分隔Base64或URL)',
     view_count INT DEFAULT 0 COMMENT '浏览量',
     status INT DEFAULT 1 COMMENT '商品状态：0下架，1在售，2已售出',
+    review_status TINYINT NOT NULL DEFAULT 1 COMMENT '审核状态：0待审核 1已通过 2未通过',
+    review_reason VARCHAR(255) DEFAULT NULL COMMENT '审核拒绝理由',
+    reviewed_by BIGINT DEFAULT NULL COMMENT '审核人（管理员）ID',
+    reviewed_time DATETIME DEFAULT NULL COMMENT '审核时间',
     created_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     sold_time DATETIME DEFAULT NULL COMMENT '售出时间',
     PRIMARY KEY (id),
     KEY idx_user_id (user_id),
     KEY idx_category (category),
-    KEY idx_status (status)
+    KEY idx_status (status),
+    KEY idx_products_review (review_status, created_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品表';
 
 -- 订单表
@@ -121,15 +128,17 @@ CREATE TABLE IF NOT EXISTS messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息表';
 
 -- 初始化分类数据
-INSERT INTO categories (name, description, sort_order, status) VALUES
-('图书教材', '二手图书、教材、考试资料', 1, 1),
-('数码电子', '手机、电脑、平板、耳机等', 2, 1),
-('生活用品', '日常用品、宿舍用品', 3, 1),
-('服饰鞋包', '衣服、鞋子、包包', 4, 1),
-('运动户外', '运动器材、户外装备', 5, 1),
-('美妆护肤', '化妆品、护肤品', 6, 1),
-('学习用品', '文具、学习工具', 7, 1),
-('其他', '其他闲置物品', 8, 1);
+INSERT INTO categories (name, code, description, sort_order, status) VALUES
+('图书教材', 'books', '二手图书、教材、考试资料', 1, 1),
+('数码电子', 'electronics', '手机、电脑、平板、耳机等', 2, 1),
+('生活用品', 'living', '日常用品、宿舍用品', 3, 1),
+('服饰鞋包', 'clothing', '衣服、鞋子、包包', 4, 1),
+('运动户外', 'sports', '运动器材、户外装备', 5, 1),
+('美妆护肤', 'beauty', '化妆品、护肤品', 6, 1),
+('学习用品', 'stationery', '文具、学习工具', 7, 1),
+('其他', 'other', '其他闲置物品', 8, 1),
+('游戏数码', 'gaming', '游戏机、手柄及数码配件', 9, 1),
+('出行工具', 'transport', '自行车、电动车及出行装备', 10, 1);
 
 
 -- ============================================================

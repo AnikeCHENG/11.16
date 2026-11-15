@@ -137,6 +137,16 @@
                 <span class="listing-price">{{ item.price }}</span>
                 <span class="listing-views">{{ item.views }} 次浏览</span>
               </div>
+              <p v-if="item.reviewStatus === 2 && item.reviewReason" class="listing-review-reason">
+                未通过：{{ item.reviewReason }}
+              </p>
+              <button
+                v-if="item.reviewStatus === 2"
+                class="listing-resubmit"
+                @click.stop="resubmitListing(item)"
+              >
+                重新提交审核
+              </button>
               <div class="listing-actions">
                 <button class="listing-btn edit" @click.stop="editProduct(item)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -807,12 +817,13 @@ import { submitReview, studentVerify, getOrderReview, submitScreenshotVerificati
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { updateProfile, getProfile } from '../api/user'
-import { getMyProducts, deleteProduct as deleteProductAPI } from '../api/product'
+import { getMyProducts, deleteProduct as deleteProductAPI, resubmitProduct } from '../api/product'
 import { getOrderList, confirmOrder, shipOrder, cancelOrderById, applyRefund, approveRefund, rejectRefund, cancelRefundRequest } from '../api/order'
 import { getFavoriteList, removeFavoriteById, getHistoryList, clearHistory } from '../api/favorites'
 import { uploadImage } from '../api/upload'
 import { getSessionUserId, getSessionUsername } from '../utils/session'
 import { firstImage } from '../utils/images'
+import { categoryLabel, loadCategories } from '../utils/categories'
 
 const router = useRouter()
 function go(path) { router.push(path) }
@@ -1194,16 +1205,34 @@ async function loadMyProducts() {
     const res = await getMyProducts()
     if (res.code === 200 && res.data) {
       const products = res.data
-      myListings.value = products.map(p => ({
-        id: p.id,
-        title: p.title,
-        price: `¥${p.price}`,
-        image: firstImage(p.images),
-        // 商品状态 0=下架 1=在售 2=已售出
-        status: p.status === 1 ? 'selling' : p.status === 2 ? 'sold' : 'offline',
-        statusText: p.status === 1 ? '在售' : p.status === 2 ? '已售' : '已下架',
-        views: p.viewCount || 0
-      }))
+      myListings.value = products.map(p => {
+        // 审核状态优先于上下架状态展示：待审核/未通过的商品本身都是下架态，
+        // 直接显示「已下架」会误导演家以为是自己下架的。
+        const review = p.reviewStatus ?? 1
+        let status
+        let statusText
+        if (review === 0) {
+          status = 'pending'
+          statusText = '审核中'
+        } else if (review === 2) {
+          status = 'rejected'
+          statusText = '未通过'
+        } else {
+          status = p.status === 1 ? 'selling' : p.status === 2 ? 'sold' : 'offline'
+          statusText = p.status === 1 ? '在售' : p.status === 2 ? '已售' : '已下架'
+        }
+        return {
+          id: p.id,
+          title: p.title,
+          price: `¥${p.price}`,
+          image: firstImage(p.images),
+          status,
+          statusText,
+          reviewStatus: review,
+          reviewReason: p.reviewReason || '',
+          views: p.viewCount || 0
+        }
+      })
       
       const listingsCount = products.filter(p => p.status === 1).length
       const soldCount = products.filter(p => p.status === 2).length
@@ -1459,16 +1488,7 @@ function deleteDraft(index) {
 }
 
 function getCategoryName(category) {
-  const categories = {
-    'textbooks': '教材',
-    'electronics': '电子产品',
-    'clothing': '服装',
-    'daily': '日用品',
-    'sports': '运动器材',
-    'books': '书籍',
-    'other': '其他'
-  }
-  return categories[category] || category || '未分类'
+  return category ? categoryLabel(category) : '未分类'
 }
 
 function formatDate(timestamp) {
@@ -1510,6 +1530,24 @@ async function deleteProduct(item) {
     // 后端会给出具体原因（例如「该商品还有进行中的订单，暂时不能删除」），
     // 直接透传，别让用户只看到一句没头没脑的「请稍后重试」
     alert(error?.response?.message || '删除失败，请稍后重试')
+  }
+}
+
+/** 被拒商品修改后重新提交审核 */
+async function resubmitListing(item) {
+  try {
+    const res = await resubmitProduct(item.id)
+    if (res.code === 200) {
+      item.reviewStatus = 0
+      item.status = 'pending'
+      item.statusText = '审核中'
+      item.reviewReason = ''
+      ElMessage.success('已重新提交审核，请等待管理员处理')
+    } else {
+      ElMessage.error(res.message || '提交失败')
+    }
+  } catch (error) {
+    ElMessage.error(error?.response?.message || '提交失败，请稍后重试')
   }
 }
 
@@ -1863,6 +1901,7 @@ async function saveProfile() {
 }
 
 onMounted(() => {
+  loadCategories()
   loadAllData()
   loadScreenshotStatus()
 })
@@ -2248,6 +2287,48 @@ onMounted(() => {
 .listing-status.sold {
   background: rgba(107, 114, 128, 0.9);
   color: white;
+}
+
+/* 审核中：与「已下架」区分开，避免卖家以为是自己下架的 */
+.listing-status.pending {
+  background: rgba(245, 158, 11, 0.92);
+  color: #1a1a3e;
+}
+
+/* 审核未通过：需要卖家修改后重新提交 */
+.listing-status.rejected {
+  background: rgba(239, 68, 68, 0.92);
+  color: white;
+}
+
+.listing-review-reason {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  border-left: 3px solid rgba(239, 68, 68, 0.8);
+  color: #ffb4b4;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.listing-resubmit {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.15);
+  color: #ffb4b4;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.listing-resubmit:hover {
+  background: rgba(239, 68, 68, 0.28);
+  color: #fff;
 }
 
 .listing-info {
