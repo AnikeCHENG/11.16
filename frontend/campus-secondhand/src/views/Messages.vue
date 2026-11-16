@@ -7,7 +7,7 @@
     </div>
 
     <main class="msg-main">
-      <div class="msg-shell">
+      <div class="msg-shell" :class="{ 'chat-open': selectedUserId }">
         <!-- 会话列表 -->
         <aside class="sidebar">
           <div class="sidebar-head">
@@ -21,12 +21,12 @@
 
           <div class="conv-list">
             <div v-if="loading" class="empty"><p class="loading-text">[ LOADING… ]</p></div>
-            <div v-else-if="conversations.length === 0" class="empty">
+            <div v-else-if="displayConversations.length === 0" class="empty">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-              <p>暂无消息</p>
+              <p>{{ activeTab === 'sent' ? '还没有发出过消息' : '暂无消息' }}</p>
             </div>
             <button
-              v-for="conv in conversations"
+              v-for="conv in displayConversations"
               :key="conv.userId"
               class="conv"
               :class="{ active: selectedUserId === conv.userId }"
@@ -61,6 +61,8 @@
 
           <template v-else>
             <div class="chat-head">
+              <!-- 窄屏（会话列表被收起）时用于返回列表 -->
+              <button class="chat-back" type="button" aria-label="返回会话列表" @click="closeChat">←</button>
               <div class="chat-user">
                 <div class="chat-avatar"><img :src="currentConversation?.avatar || defaultAvatar" :alt="currentConversation?.username" /></div>
                 <div class="chat-user-info">
@@ -115,6 +117,7 @@
                       :src="msg.content"
                       alt="图片消息"
                       loading="lazy"
+                      @load="onMessageImageLoad"
                       @click="lightboxUrl = msg.content"
                     />
                     <p v-if="msg.caption">{{ msg.caption }}</p>
@@ -173,6 +176,7 @@ import { useRoute } from 'vue-router'
 import {
   getConversations,
   getConversation,
+  getSentMessages,
   sendMessage as sendMessageApi,
   markAsRead
 } from '../api/message'
@@ -196,6 +200,11 @@ const { poll: pollUnread } = useMessageNotify()
 const loading = ref(true)
 const activeTab = ref('received')
 const conversations = ref([])
+/** 「已发送」列表：按收件人聚合，每个收件人只保留最近一条 */
+const sentConversations = ref([])
+const displayConversations = computed(() =>
+  activeTab.value === 'sent' ? sentConversations.value : conversations.value
+)
 const selectedUserId = ref(null)
 const currentMessages = ref([])
 const newMessage = ref('')
@@ -289,7 +298,7 @@ async function onImageFileChange(event) {
       ElMessage.error(res.message || '图片发送失败')
     }
   } catch (e) {
-    ElMessage.error(e?.cause?.message || e?.message || '图片发送失败，请检查网络')
+    ElMessage.error(e?.message || e?.cause?.message || '图片发送失败，请检查网络')
   } finally {
     imageUploading.value = false
   }
@@ -309,6 +318,24 @@ function pushLocalMessage(res, content, extra = {}) {
     isRead: 0
   }
   currentMessages.value.push(msg)
+  // 「已发送」列表同步更新预览，切到该标签时不必等下一次拉取
+  const preview = messagePreview(msg)
+  const sentEntry = sentConversations.value.find(c => c.userId === msg.receiverId)
+  if (sentEntry) {
+    sentEntry.lastMessage = preview
+    sentEntry.lastMessageTime = msg.createdTime
+    sentConversations.value = [sentEntry, ...sentConversations.value.filter(c => c.userId !== msg.receiverId)]
+  } else {
+    sentConversations.value = [{
+      userId: msg.receiverId,
+      username: currentConversation.value?.username || ('用户' + msg.receiverId),
+      avatar: currentConversation.value?.avatar || defaultAvatar,
+      lastMessage: preview,
+      lastMessageTime: msg.createdTime,
+      unreadCount: 0,
+      messages: []
+    }, ...sentConversations.value]
+  }
   // 新会话在列表中还不存在，首条消息发出后应立刻可见
   if (isNewChat.value && draftConversation.value) {
     conversations.value = [
@@ -355,8 +382,38 @@ const isNewChat = computed(() =>
 )
 
 
-async function fetchMessages() {
-  loading.value = true
+/**
+ * 加载「已发送」列表。
+ *
+ * <p>此前切换到「已发送」标签只改了 activeTab，列表仍然渲染收件箱，
+ * 看起来像点了没反应。这里按收件人聚合成会话，点击即可打开与该用户的会话。</p>
+ */
+async function fetchSentConversations(options = {}) {
+  try {
+    const res = await getSentMessages()
+    if (res.code !== 200 || !Array.isArray(res.data)) return
+    const map = new Map()
+    for (const m of res.data) {
+      const uid = m.receiverId
+      if (!uid || map.has(uid)) continue // 后端按时间倒序，首条即最近一条
+      map.set(uid, {
+        userId: uid,
+        username: m.receiver?.username || ('用户' + uid),
+        avatar: m.receiver?.avatar || defaultAvatar,
+        lastMessage: messagePreview(m),
+        lastMessageTime: m.createdTime,
+        unreadCount: 0,
+        messages: []
+      })
+    }
+    sentConversations.value = [...map.values()]
+  } catch (e) {
+    if (!options.silent) console.error('加载已发送消息失败:', e)
+  }
+}
+
+async function fetchMessages(options = {}) {
+  if (!options.silent) loading.value = true
   try {
     pollUnread()
     const convRes = await getConversations()
@@ -374,7 +431,7 @@ async function fetchMessages() {
   } catch (e) {
     console.error('加载消息失败:', e)
   } finally {
-    loading.value = false
+    if (!options.silent) loading.value = false
   }
 }
 
@@ -508,12 +565,98 @@ async function sendMessage() {
       newMessage.value = content
     }
   } catch (e) {
-    ElMessage.error(e?.cause?.message || e?.message || '发送失败')
+    ElMessage.error(e?.message || e?.cause?.message || '发送失败')
     newMessage.value = content
   }
 }
 
 function scrollToBottom() { if (messagesContainer.value) messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight }
+
+/** 返回会话列表（窄屏下会话列表被收起，用返回键切回） */
+function closeChat() {
+  selectedUserId.value = null
+  currentMessages.value = []
+  draftConversation.value = null
+}
+
+/** 用户当前是否停留在消息底部：只在底部时才自动滚动，避免打断翻看历史 */
+function isNearBottom() {
+  const el = messagesContainer.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+/** 图片解码完成后高度才确定，若用户仍在底部则补一次滚动 */
+function onMessageImageLoad() {
+  if (isNearBottom()) scrollToBottom()
+}
+
+/**
+ * 刷新当前打开的会话。
+ *
+ * <p>此前聊天页只在打开会话时拉一次历史，对方再发消息必须手动切换会话/刷新页面才能看到，
+ * 两个人同时在线时看起来就是「发不出去、收不到」。这里改为 3 秒轮询当前会话，
+ * 收到的新消息就地追加并标记已读。</p>
+ */
+const CHAT_POLL_MS = 3000
+let chatTimer = null
+let refreshingChat = false
+let pollTicks = 0
+
+async function refreshCurrentConversation() {
+  const uid = selectedUserId.value
+  if (!uid || refreshingChat) return
+  refreshingChat = true
+  try {
+    const res = await getConversation(uid)
+    if (res.code !== 200 || !Array.isArray(res.data) || selectedUserId.value !== uid) return
+    const incoming = res.data.slice().sort((a, b) => new Date(a.createdTime) - new Date(b.createdTime))
+    // 保留本地乐观追加、服务端尚未返回的消息（其 id 为时间戳）
+    const serverIds = new Set(incoming.map(m => m.id))
+    const pendingLocal = currentMessages.value.filter(m => !serverIds.has(m.id) && Number(m.id) > 1e12)
+    const prevMaxId = currentMessages.value.reduce((mx, m) => Math.max(mx, Number(m.id) || 0), 0)
+    const fresh = incoming.filter(m => (Number(m.id) || 0) > prevMaxId && m.senderId !== currentUserId.value)
+    const nearBottom = isNearBottom()
+
+    currentMessages.value = [...incoming, ...pendingLocal]
+      .sort((a, b) => new Date(a.createdTime) - new Date(b.createdTime))
+
+    for (const m of fresh) {
+      if (m.isRead === 0) {
+        try { await markAsRead(m.id) } catch { /* 已读失败不影响显示 */ }
+      }
+    }
+    if (fresh.length) {
+      notificationStore.decrementUnreadCount()
+      pollUnread()
+    }
+    if (nearBottom) {
+      await nextTick()
+      scrollToBottom()
+    }
+  } catch (e) {
+    /* 轮询失败静默，等下一轮 */
+  } finally {
+    refreshingChat = false
+  }
+}
+
+function startChatPolling() {
+  stopChatPolling()
+  chatTimer = setInterval(() => {
+    if (document.hidden) return
+    refreshCurrentConversation()
+    // 每 3 轮（约 9 秒）顺带刷新列表的预览与未读数
+    if (++pollTicks % 3 === 0) {
+      if (activeTab.value === 'sent') fetchSentConversations({ silent: true })
+      else fetchMessages({ silent: true })
+    }
+  }, CHAT_POLL_MS)
+}
+
+function stopChatPolling() {
+  if (chatTimer) { clearInterval(chatTimer); chatTimer = null }
+}
 
 function formatTime(time) {
   if (!time) return ''
@@ -530,7 +673,13 @@ function formatMessageTime(time) {
   return new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-watch(activeTab, () => { selectedUserId.value = null; currentMessages.value = [] })
+watch(activeTab, async (tab) => {
+  selectedUserId.value = null
+  currentMessages.value = []
+  draftConversation.value = null
+  if (tab === 'sent') await fetchSentConversations()
+  else await fetchMessages({ silent: true })
+})
 
 // Esc 关闭图片预览
 function onWindowKeydown(e) {
@@ -547,9 +696,13 @@ onMounted(async () => {
   } else {
     await loadContextProduct()
   }
+  startChatPolling()
 })
 
-onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onWindowKeydown)
+  stopChatPolling()
+})
 </script>
 
 <style scoped>
@@ -557,9 +710,42 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown))
 .icon-btn svg { width: 20px; height: 20px; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 
-.messages-page { display: flex; flex-direction: column; }
-.msg-main { flex: 1; max-width: var(--container); width: 100%; margin: 0 auto; padding: var(--space-6); height: calc(100vh - var(--header-h)); }
-.msg-shell { display: grid; grid-template-columns: 320px 1fr; height: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.messages-page {
+  display: flex;
+  flex-direction: column;
+  /* 撑满导航以下的视口，聊天面板才能拿到确定高度 */
+  height: calc(100vh - var(--header-h));
+  min-height: 420px;
+  overflow: hidden;
+}
+.msg-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-width: var(--container);
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+/*
+ * 注意：这里不能再写 height: 100%。
+ * .msg-main 是 flex 项（flex: 1），其高度由 flex 布局撑开而非显式 height，
+ * 子元素百分比高度会解析失败 → 面板塌成内容高度（约 110px），输入框被裁掉。
+ * 改用 flex: 1 + min-height: 0，让面板正确占满。
+ */
+.msg-shell {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  background: var(--surface);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
 
 .sidebar { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
 .sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); }
@@ -588,6 +774,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown))
 .chat-empty h3 { font-size: var(--text-lg); color: var(--text); }
 .chat-empty p { font-size: var(--text-sm); }
 .chat-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); }
+/* 返回会话列表：仅窄屏显示 */
+.chat-back { display: none; width: 32px; height: 32px; margin-right: var(--space-2); font-size: 18px; line-height: 1; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; flex-shrink: 0; }
+.chat-back:hover { color: var(--text); background: var(--surface-3); }
+@media (max-width: 860px) { .chat-back { display: block; } }
 .chat-user { display: flex; align-items: center; gap: var(--space-3); }
 .chat-avatar { width: 40px; height: 40px; border-radius: var(--radius-full); overflow: hidden; border: 1px solid var(--border); }
 .chat-avatar img { width: 100%; height: 100%; object-fit: cover; }
@@ -631,7 +821,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown))
 
 @media (max-width: 860px) {
   .msg-shell { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
+  /*
+   * 此前这里直接 display: none 掉会话列表，窄窗口下既看不到联系人、
+   * 也没有任何入口选择会话，聊天页等于不可用。
+   * 改为「列表 / 聊天」二选一：未选会话看列表，选中后看聊天并能返回。
+   */
+  .sidebar { display: flex; }
+  .chat { display: none; }
+  .msg-shell.chat-open .sidebar { display: none; }
+  .msg-shell.chat-open .chat { display: flex; }
 }
 
 /* ============ 商品上下文卡片 ============ */

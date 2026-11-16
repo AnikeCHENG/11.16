@@ -23,7 +23,12 @@ async function request(path, options = {}) {
     }
     return data
   } catch (e) {
-    const err = new Error('Network request failed')
+    // 业务错误（含后端 message）原样抛出，不要统一改写成 Network request failed，
+    // 否则用户只能看到「网络失败」，无法判断是参数不合法还是真的断网。
+    if (e && e.response) throw e
+    const err = new Error(e?.message && e.message !== 'Failed to fetch'
+      ? e.message
+      : '网络连接失败，请检查网络后重试')
     err.cause = e
     throw err
   }
