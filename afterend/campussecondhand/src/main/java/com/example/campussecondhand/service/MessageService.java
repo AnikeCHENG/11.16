@@ -80,12 +80,25 @@ public class MessageService {
                 .sorted((a, b) -> {
                     Object t1 = a.get("lastMessageTime");
                     Object t2 = b.get("lastMessageTime");
-                    if (t1 == null && t2 == null) return 0;
+                    if (t1 == null && t2 == null) return compareLastId(b, a);
                     if (t1 == null) return 1;
                     if (t2 == null) return -1;
-                    return ((java.time.LocalDateTime) t2).compareTo((java.time.LocalDateTime) t1);
+                    int cmp = ((java.time.LocalDateTime) t2).compareTo((java.time.LocalDateTime) t1);
+                    // created_time 只精确到秒：同一秒内多条消息按自增 id 兜底，避免预览/排序错乱
+                    return cmp != 0 ? cmp : compareLastId(b, a);
+                })
+                .map(m -> {
+                    // 内部排序字段，不返回给前端
+                    m.remove("lastMessageId");
+                    return m;
                 })
                 .toList();
+    }
+
+    private static int compareLastId(java.util.Map<String, Object> a, java.util.Map<String, Object> b) {
+        long idA = a.get("lastMessageId") instanceof Number n ? n.longValue() : 0L;
+        long idB = b.get("lastMessageId") instanceof Number n ? n.longValue() : 0L;
+        return Long.compare(idA, idB);
     }
 
     private void putConversation(java.util.Map<Long, java.util.Map<String, Object>> convMap, Long meId, Long otherId, String username, String avatar, boolean studentVerified, Message msg, boolean fromThem) {
@@ -99,14 +112,20 @@ map.put("otherUserId", otherId);
         map.put("studentVerified", studentVerified);
             map.put("lastMessage", "");
             map.put("lastMessageTime", null);
+            map.put("lastMessageId", 0L);
             map.put("unreadCount", 0);
             return map;
         });
-        Object time = conv.get("lastMessageTime");
-        if (time == null || (msg.getCreatedTime() != null && msg.getCreatedTime().isAfter((java.time.LocalDateTime) time))) {
+        long lastId = conv.get("lastMessageId") instanceof Number n ? n.longValue() : 0L;
+        long msgId = msg.getId() == null ? 0L : msg.getId();
+        boolean newer = msgId > 0 ? msgId > lastId
+                : msg.getCreatedTime() != null && (conv.get("lastMessageTime") == null
+                    || msg.getCreatedTime().isAfter((java.time.LocalDateTime) conv.get("lastMessageTime")));
+        if (newer) {
             // 预览不暴露图片裸路径：图片消息显示「[图片] 配文」
             conv.put("lastMessage", previewOf(msg));
             conv.put("lastMessageTime", msg.getCreatedTime());
+            conv.put("lastMessageId", msgId);
         }
         if (fromThem && msg.getIsRead() != null && msg.getIsRead() == 0) {
             conv.put("unreadCount", ((Number) conv.get("unreadCount")).intValue() + 1);

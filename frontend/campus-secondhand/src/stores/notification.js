@@ -19,9 +19,10 @@ export const useNotificationStore = defineStore('notification', () => {
   }
 
   /** 发消息成功后本地自减，避免等待下一次轮询 */
-  function decrementUnreadCount() {
-    if (unreadCount.value > 0) {
-      unreadCount.value--
+  function decrementUnreadCount(count = 1) {
+    const n = Number(count) || 0
+    if (n > 0) {
+      unreadCount.value = Math.max(0, unreadCount.value - n)
     }
   }
 

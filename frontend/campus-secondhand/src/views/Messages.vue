@@ -536,9 +536,12 @@ async function selectConversation(conv) {
       scrollToBottom()
       const unreadMessages = currentMessages.value.filter(m => m.senderId !== currentUserId.value && m.isRead === 0)
       for (const msg of unreadMessages) { try { await markAsRead(msg.id) } catch { console.log('标记已读失败') } }
-      // 角标要立刻递减，不能等下一轮 10 秒轮询：先乐观本地递减，再触发单例回源校正
-      notificationStore.decrementUnreadCount()
-      pollUnread()
+      // 会话列表里的角标要立即消失，不能等下一轮 9 秒的列表刷新
+      const convEntry = conversations.value.find(c => c.userId === conv.userId)
+      if (convEntry) convEntry.unreadCount = 0
+      // 角标要立刻递减，不能等下一轮 10 秒轮询：按实际已读条数本地扣减，再强制回源校正
+      notificationStore.decrementUnreadCount(unreadMessages.length)
+      pollUnread(true)
     }
   } catch (e) {
     console.error('加载对话失败:', e)
@@ -627,8 +630,10 @@ async function refreshCurrentConversation() {
       }
     }
     if (fresh.length) {
-      notificationStore.decrementUnreadCount()
-      pollUnread()
+      notificationStore.decrementUnreadCount(fresh.length)
+      pollUnread(true)
+      const convEntry = conversations.value.find(c => c.userId === uid)
+      if (convEntry) convEntry.unreadCount = 0
     }
     if (nearBottom) {
       await nextTick()
