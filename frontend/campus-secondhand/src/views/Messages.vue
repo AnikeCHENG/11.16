@@ -799,7 +799,7 @@ onBeforeUnmount(() => {
 .message-content { display: flex; flex-direction: column; gap: 4px; }
 .message.sent .message-content { align-items: flex-end; }
 .message-bubble { padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); border-top-left-radius: 4px; }
-.message.sent .message-bubble { background: var(--accent); border-color: var(--accent); border-radius: var(--radius-lg); border-top-right-radius: 4px; }
+.message.sent .message-bubble { background: #2563eb; border-color: #2563eb; border-radius: var(--radius-lg); border-top-right-radius: 4px; }
 .message-bubble p { font-size: var(--text-base); color: var(--text); line-height: var(--leading-normal); }
 .message.sent .message-bubble p { color: #fff; }
 .message-time { font-size: var(--text-xs); color: var(--text-3); padding: 0 4px; }
