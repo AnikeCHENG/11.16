@@ -3530,4 +3530,85 @@ onMounted(() => {
   color: #c0392b;
   background: rgba(192, 57, 43, 0.1);
   border-radius: 4px;
+}
+
+/* 头像此前没有任何尺寸约束：上传图会按原图宽度撑满资料卡 */
+.avatar-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.avatar-wrapper {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+}
+.avatar-wrapper .avatar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--surface-3);
+}
+
+/* ============ 窄屏资料卡：按钮不换字、统计不挤在一起 ============ */
+@media (max-width: 768px) {
+  .main-content {
+    padding-top: var(--space-6);
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+    padding-bottom: calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
+  .profile-header { margin-bottom: var(--space-5); }
+  .profile-card {
+    gap: var(--space-5);
+    padding: var(--space-6) var(--space-4);
+    border-radius: var(--radius-lg);
+  }
+  .avatar-wrapper { width: 88px; height: 88px; }
+  .user-name { font-size: var(--text-2xl); overflow-wrap: anywhere; }
+  .user-bio, .user-meta { font-size: var(--text-sm); }
+  .user-meta { gap: var(--space-3); }
+
+  /* 五个统计等分一行；余额用稍小字号，避免「¥0.00」把格子撑开 */
+  .user-stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: end;
+    gap: var(--space-2);
+    width: 100%;
+  }
+  .stat-item { min-width: 0; }
+  .stat-value {
+    font-size: var(--text-lg);
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .stat-item:last-child .stat-value { font-size: var(--text-base); }
+  .stat-label { font-size: 12px; margin-top: 2px; white-space: nowrap; }
+
+  /* 两个操作按钮全宽上下排列，每个 44px 高，标签保持单行 */
+  .profile-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 10px;
+  }
+  .action-btn-primary,
+  .action-btn-secondary {
+    width: 100%;
+    min-height: 44px;
+    padding: 12px 16px;
+    white-space: nowrap;
+  }
+
+  .profile-tabs { gap: 6px; padding: 6px; }
+  .tab-btn {
+    min-height: 44px;
+    padding: 10px 12px;
+    white-space: nowrap;
+  }
 }</style>

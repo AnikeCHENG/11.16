@@ -723,7 +723,7 @@ onMounted(() => {
 
 @media (max-width: 900px) {
   /* minmax(0, 1fr)：默认 1fr 的最小值是内容宽度，375px 下卡片被撑出视口右侧被裁切 */
-  .detail { grid-template-columns: minmax(0, 1fr); }
+  .detail { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
   .gallery, .info { min-width: 0; }
   .gallery { position: static; }
   .title { font-size: var(--text-xl); }
@@ -734,9 +734,31 @@ onMounted(() => {
    .seller-info 又是 flex:1 且默认 min-width:auto，于是把「联系卖家」挤出视口 27px。
    窄屏下评分允许换行，按钮另起一行占满宽度。 */
 @media (max-width: 480px) {
+  .detail-main {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+    padding-bottom: calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
+  .main-image { border-radius: var(--radius-lg); }
+  .block { padding: var(--space-4); }
+  .info-head { padding: var(--space-4); }
+  .meta-row { gap: var(--space-3); }
   .seller { flex-wrap: wrap; gap: var(--space-3); }
-  .seller .btn { flex: 1 1 100%; justify-content: center; }
-  .actions .btn { padding-left: var(--space-2); padding-right: var(--space-2); }
+  .seller .btn {
+    flex: 1 1 100%;
+    justify-content: center;
+    min-height: 44px;
+  }
+  .actions { gap: var(--space-2); }
+  .actions .btn {
+    height: auto;
+    min-height: 44px;
+    padding: 8px var(--space-2);
+    font-size: var(--text-sm);
+  }
+  /* 主操作（立即购买）独占一整行，收藏/加购并排且不会被挤出屏幕 */
+  .actions .btn-primary { grid-column: 1 / -1; }
+  .report-link { min-height: 44px; padding: var(--space-2) 0; }
 }
 
 /* 收藏按钮：已收藏用 danger 色 + 实心爱心，附弹跳反馈 */

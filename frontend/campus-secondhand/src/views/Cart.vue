@@ -291,8 +291,8 @@ onMounted(loadCart)
 .cart-main { padding: var(--space-8) var(--space-6) var(--space-16); }
 
 .cart-title-row { margin-bottom: var(--space-6); }
-.cart-title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; margin: 0; }
-.cart-sub { margin-top: var(--space-1); font-size: var(--text-sm); color: var(--text-2); }
+.cart-title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; margin: 0; color: rgba(255, 255, 255, 0.92); }
+.cart-sub { margin-top: var(--space-1); font-size: var(--text-sm); color: rgba(255, 255, 255, 0.64); }
 
 .cart-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
 
@@ -412,13 +412,67 @@ onMounted(loadCart)
 .state-desc { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--text-2); }
 
 @media (max-width: 640px) {
-  .cart-main { padding: var(--space-6) var(--space-4) var(--space-16); }
-  .cart-item { flex-wrap: wrap; gap: var(--space-3); }
-  .cart-item-title { max-width: 200px; }
-  .cart-remove { margin-left: auto; }
-  .cart-bar { flex-wrap: wrap; gap: var(--space-3); }
+  .cart-main {
+    padding: var(--space-5) var(--space-4)
+      calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
+  .cart-title-row { margin-bottom: var(--space-5); }
+  .cart-item {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+  }
+
+  /* 扩大勾选区的点击热区，但视觉方块仍是 20px，不占额外布局宽度 */
+  .cart-check { padding: 12px; margin: -12px; }
+
+  .cart-thumb { width: 72px; height: 72px; }
+  .cart-info { flex: 1 1 120px; }
+
+  /* 标题允许两行，价格与卖家信息保持完整可见 */
+  .cart-item-title {
+    max-width: none;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .cart-remove {
+    margin-left: auto;
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+
+  .cart-bar {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
   .bar-summary { order: -1; width: 100%; }
-  .checkout-btn { width: 100%; }
+  .checkout-btn { width: 100%; min-height: 48px; }
+
+  /* 次级操作在玻璃底上提亮，并做成可点的胶囊 */
+  .link-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 8px 14px;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-full);
+    text-decoration: none;
+  }
+  .link-btn:hover:not(:disabled) {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: var(--danger-soft);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -577,15 +577,18 @@ onBeforeUnmount(() => clearInterval(timer))
 }
 /* 44px 大字：#b07d12 在白卡上 3.63:1，满足 WCAG AA 大字(≥24px)标准 */
 .hero-amount {
-  font-family: var(--font-mono);
+  /* 金额用无衬线而非等宽：等宽字体的「.」两侧自带字宽，看起来像 ¥28 . 64 */
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   font-size: var(--text-4xl);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   color: var(--warning);
+  white-space: nowrap;
 }
 .hero-cny {
+  font-family: var(--font-sans);
   font-size: var(--text-2xl);
   font-weight: var(--weight-medium);
   margin-right: 2px;
@@ -595,7 +598,11 @@ onBeforeUnmount(() => clearInterval(timer))
   font-size: var(--text-sm);
   color: var(--text-2);
 }
-.hero-order-no .mono { color: var(--text-3); }
+.hero-order-no .mono {
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
 
 .hero-right { text-align: right; flex-shrink: 0; }
 .countdown-label {
@@ -834,12 +841,43 @@ onBeforeUnmount(() => clearInterval(timer))
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 768px) {
+  .pay-main {
+    padding: var(--space-5) var(--space-4)
+      calc(var(--space-10) + var(--safe-bottom, 0px));
+  }
+  .pay-header-inner { padding: 0 var(--space-4); }
   .pay-layout { grid-template-columns: minmax(0, 1fr); }
   .pay-col-side { position: static; }
   .pay-hero { flex-direction: column; gap: var(--space-4); }
   .hero-right { text-align: left; }
+  .hero-amount { font-size: var(--text-3xl); }
+  .hero-cny { font-size: var(--text-xl); }
+  .hero-order-no { font-size: var(--text-xs); }
+
+  /* 明细行允许左侧说明换行，金额始终完整靠右 */
+  .amount-row { align-items: flex-start; gap: var(--space-3); }
+  .amount-row dt { min-width: 0; overflow-wrap: anywhere; }
+  .amount-row dd { flex-shrink: 0; white-space: nowrap; }
+
   .methods { grid-template-columns: 1fr; }
-  .method { flex-direction: row; justify-content: flex-start; gap: var(--space-3); }
+  .method {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    min-height: 48px;
+  }
   .method-check { top: 50%; transform: translateY(-50%); }
+
+  .pay-submit { min-height: 52px; }
+  .pay-terms { margin-top: 0; padding: 0 var(--space-2); }
+  .state-actions { flex-direction: column; width: 100%; }
+  .state-actions .btn { width: 100%; min-height: 44px; }
+}
+
+@media (max-width: 420px) {
+  .hero-amount { font-size: var(--text-3xl); }
+  .hero-cny { font-size: var(--text-xl); }
+  .amount-row { font-size: var(--text-sm); }
+  .amount-sub { display: block; margin-top: 2px; }
 }
 </style>

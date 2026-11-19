@@ -741,9 +741,11 @@ onBeforeUnmount(() => {
  */
 .msg-shell {
   flex: 1;
+  min-width: 0;
   min-height: 0;
+  width: 100%;
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px minmax(0, 1fr);
   background: var(--surface);
   -webkit-backdrop-filter: blur(18px) saturate(160%);
   backdrop-filter: blur(18px) saturate(160%);
@@ -825,7 +827,8 @@ onBeforeUnmount(() => {
 .lightbox-mask img { max-width: 92vw; max-height: 90vh; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
 
 @media (max-width: 860px) {
-  .msg-shell { grid-template-columns: 1fr; }
+  /* minmax(0,1fr)：1fr 的最小值是内容宽度，长消息预览会把整个面板撑出视口 */
+  .msg-shell { grid-template-columns: minmax(0, 1fr); }
   /*
    * 此前这里直接 display: none 掉会话列表，窄窗口下既看不到联系人、
    * 也没有任何入口选择会话，聊天页等于不可用。
@@ -892,4 +895,83 @@ onBeforeUnmount(() => {
   padding: var(--space-8);
 }
 .chat-intro-title { font-size: var(--text-base); color: var(--text-2); margin-bottom: var(--space-2); }
-.chat-intro-desc { font-size: var(--text-sm); }</style>
+.chat-intro-desc { font-size: var(--text-sm); }
+
+/* ============ 窄屏（360–430px）聊天可读性 ============ */
+@media (max-width: 640px) {
+  /* 卡片两侧留白收窄，把宽度让给气泡 */
+  .msg-main { padding: var(--space-3); }
+
+  .sidebar-head { padding: var(--space-4); }
+  .tabs { padding: var(--space-3) var(--space-4); }
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 10px 8px;
+    line-height: 1.2;
+  }
+
+  .conv { padding: var(--space-3) var(--space-2); }
+
+  /* 头部：返回键 + 用户名 + 头像都不得被卡片圆角裁掉 */
+  .chat-head {
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    min-width: 0;
+  }
+  .chat-back {
+    width: 44px;
+    height: 44px;
+    margin-right: 0;
+    font-size: 20px;
+  }
+  .chat-user { flex: 1; min-width: 0; gap: var(--space-2); }
+  .chat-avatar { width: 40px; height: 40px; flex-shrink: 0; }
+  .chat-user-info { min-width: 0; }
+  .chat-username {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .head-close { flex-shrink: 0; }
+
+  /* 气泡：限制在卡片内并允许中文在任意位置换行 */
+  .chat-body {
+    padding: var(--space-4) var(--space-3);
+    overflow-x: hidden;
+  }
+  .message { max-width: 78%; min-width: 0; }
+  .message-content { min-width: 0; max-width: 100%; }
+  .message-bubble {
+    max-width: 100%;
+    padding: 9px 12px;
+    overflow-wrap: anywhere;
+  }
+  .message-bubble p { overflow-wrap: anywhere; word-break: break-word; }
+  .message-avatar { width: 30px; height: 30px; }
+  .msg-image-thumb { max-width: min(200px, 100%); }
+
+  /* 输入区：图片按钮/发送按钮至少 44px，底部让出手势条 */
+  .chat-input {
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-3)
+      calc(var(--space-3) + var(--safe-bottom, 0px));
+  }
+  .chat-image-btn { width: 44px; height: 44px; }
+  .chat-input input {
+    min-width: 0;
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 16px; /* 避免 iOS 聚焦时自动放大 */
+  }
+  .chat-input .btn {
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    flex-shrink: 0;
+  }
+
+  .ctx-card { padding: var(--space-3) var(--space-4); }
+  .ctx-price { font-size: var(--text-sm); }
+}</style>

@@ -710,7 +710,7 @@ onMounted(async () => {
 }
 
 .plaza-user { text-align: center; }
-.plaza-user h2 { margin: 10px 0 4px; }
+.plaza-user h2 { margin: 10px 0 4px; color: var(--text); }
 .plaza-user h2 { display: inline-flex; align-items: center; gap: 6px; }
 .plaza-user p, .announcement, .active-user small { color: var(--text-2); }
 .plaza-user .user-hint { font-size: var(--text-xs); margin: var(--space-2) 0 0; }
@@ -746,7 +746,16 @@ onMounted(async () => {
   overflow: hidden; flex-shrink: 0;
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
-.avatar-lg { width: 64px; height: 64px; margin: 0 auto; font-size: var(--text-xl); }
+/* display:flex 而不是默认的 inline-flex：否则下方的 h2 会与头像排在同一行，
+   在窄屏上用户名会压到头像上。改为块级后头像居中、用户名独占一行。 */
+.avatar-lg {
+  display: flex;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  font-size: var(--text-xl);
+}
+.plaza-user h2 { max-width: 100%; overflow-wrap: anywhere; }
 
 /* conic 光环：用 ::before 画在头像外圈。
    刻意不加 overflow:hidden 到 .avatar-ring 上——那会把外扩的环裁掉。
@@ -1028,12 +1037,35 @@ onMounted(async () => {
   .plaza-right { display: none; }
 }
 @media (max-width: 760px) {
-  .plaza-shell { grid-template-columns: 1fr; padding: 16px; }
+  .plaza-shell {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-4) var(--space-4)
+      calc(var(--space-10) + var(--safe-bottom, 0px));
+    gap: var(--space-4);
+  }
   .plaza-left, .plaza-right { position: static; }
-}
-@media (max-width: 768px) {
 
+  /* 分类 chips 改为可换行的等距流式布局，不再依赖按钮间的空白字符 */
+  .plaza-filter { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .plaza-filter h3 { flex-basis: 100%; margin-bottom: 0; }
+  .plaza-filter button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+  .plaza-post-btn { min-height: 48px; }
 
+  .feed-composer { padding: var(--space-4); }
+  .feed-composer > button { min-height: 48px; }
+  .composer-types button { min-height: 40px; padding: 8px 12px; }
+  .composer-textarea { min-height: 96px; font-size: 16px; }
+  .cp-field { min-width: 100%; }
+  .cp-field--price { flex-basis: auto; }
+  .cp-field input { min-height: 44px; font-size: 16px; }
+  .cp-cancel, .cp-submit { min-height: 44px; padding: 10px 18px; }
+  .remove-image { width: 30px; height: 30px; }
 }
 /* =========================================================
    降级为静态等价物，而非冻住动画

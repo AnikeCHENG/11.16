@@ -94,8 +94,8 @@ onMounted(() => {
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-6); }
-.page-title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; }
-.page-sub { margin-top: var(--space-1); color: var(--text-2); font-size: var(--text-sm); }
+.page-title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; color: rgba(255, 255, 255, 0.92); }
+.page-sub { margin-top: var(--space-1); color: rgba(255, 255, 255, 0.64); font-size: var(--text-sm); }
 .empty-sub { font-size: var(--text-sm); }
 
 .drafts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-5); }

@@ -764,9 +764,9 @@ function getMonth(time) {
 
 .active-users-card { padding: var(--space-5); }
 .active-user-empty { color: var(--text-3); font-size: var(--text-sm); }
-.active-user-row { display: flex; align-items: center; gap: var(--space-3); padding: 6px 0; }
-.active-user-row img { width: 32px; height: 32px; border-radius: 999px; object-fit: cover; }
-.active-user-row span { font-size: var(--text-sm); color: var(--text); }
+.active-user-row { display: flex; align-items: center; gap: var(--space-3); padding: 6px 0; min-width: 0; }
+.active-user-row img { width: 32px; height: 32px; border-radius: 999px; object-fit: cover; flex-shrink: 0; }
+.active-user-row span { font-size: var(--text-sm); color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- 内容网格 ---------- */
 .content-grid {
@@ -887,9 +887,42 @@ function getMonth(time) {
   .stat { text-align: left; }
 }
 @media (max-width: 720px) {
-  .dashboard-row { grid-template-columns: repeat(2, 1fr); }
+  .page-main {
+    padding: var(--space-5) var(--space-4)
+      calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
+  .dashboard-row { grid-template-columns: repeat(2, 1fr); gap: var(--space-3); }
+  .hero {
+    min-height: 0;
+    padding: var(--space-8) var(--space-5);
+    gap: var(--space-6);
+    border-radius: var(--radius-lg);
+  }
   .hero-title { font-size: var(--text-3xl); }
-  .hero-stats { gap: var(--space-6); }
+  .hero-sub { font-size: var(--text-sm); margin-bottom: var(--space-5); }
+  .hero-actions { width: 100%; flex-wrap: wrap; }
+  .hero-actions .btn { flex: 1 1 140px; min-height: 44px; }
+  /* 三项统计改为等宽网格：不换行、不裁切，数字仍保持可读 */
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    width: 100%;
+  }
+  .stat { min-width: 0; text-align: left; }
+  .stat-label { font-size: var(--text-xs); line-height: 1.3; }
+  .stat-value { font-size: var(--text-xl); white-space: nowrap; }
+  .content-grid { gap: var(--space-4); }
+  .main-column, .side-column { gap: var(--space-4); }
+  .quick-grid { gap: 10px; }
+  .quick {
+    min-height: 104px;
+    justify-content: space-between;
+    padding: var(--space-4);
+    /* 中文短语整体换行，避免「待处理订 / 单」这种断字 */
+    word-break: keep-all;
+    overflow-wrap: normal;
+  }
   .footer-inner { flex-direction: column; gap: var(--space-8); }
   .footer-cols { gap: var(--space-10); }
 }

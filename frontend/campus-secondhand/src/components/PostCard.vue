@@ -211,16 +211,25 @@ const isProductPost = computed(() => !!props.post.productId)
   animation: ring-spin var(--ring-spin) linear infinite;
 }
 
-.feed-meta { display: grid; }
+.feed-meta { display: grid; min-width: 0; }
 .feed-meta b {
   display: flex; align-items: center; gap: 4px;
+  min-width: 0;
   font-size: var(--text-sm); color: var(--text);
+  overflow-wrap: anywhere;
 }
-.feed-meta span { font-size: var(--text-xs); }
+.feed-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
 
 /* 类型徽章：渐变底 */
 .badge {
   margin-left: auto;
+  flex-shrink: 0;
   font-size: var(--text-xs);
   padding: 3px 10px;
   border-radius: var(--radius-full);
@@ -383,5 +392,33 @@ const isProductPost = computed(() => !!props.post.productId)
   /* 爆点与弹跳取消，仅保留已变更的数字本身 */
   .like-pop .like-heart,
   .like-pop .like-count { animation: none; }
+}
+
+/* ============ 窄屏：卡片头部与互动栏不重叠、可点 ============ */
+@media (max-width: 640px) {
+  .feed-card { padding: var(--space-4) var(--space-3); }
+
+  .feed-head { gap: var(--space-3); }
+  .feed-meta b { flex-wrap: wrap; }
+
+  .feed-actions {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: space-between;
+  }
+  .feed-actions button {
+    min-height: 44px;
+    padding: 0 var(--space-1);
+  }
+
+  .comment-input input {
+    min-width: 0;
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .comment-input button { min-height: 44px; }
+
+  .feed-product { flex-wrap: wrap; }
+  .fp-title { flex-basis: 100%; }
 }
 </style>
