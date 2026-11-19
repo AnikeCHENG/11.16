@@ -56,8 +56,13 @@ public class AuthWriteInterceptor implements HandlerInterceptor {
             throws Exception {
         String method = request.getMethod();
         if (method == null || !WRITE_METHODS.contains(method.toUpperCase(Locale.ROOT))) {
-            // GET/HEAD/OPTIONS：CORS 预检与实际读请求都不在这里拦
-            return true;
+            // GET/HEAD/OPTIONS：匿名读与 CORS 预检照常放行；
+            // 但<b>带着 token 的读请求</b>要拦封禁账号——否则封禁后旧 token 在过期前
+            // 仍能读自己的订单、私信、余额流水（实测封禁只对写接口生效）。
+            if ("OPTIONS".equalsIgnoreCase(method)) {
+                return true;
+            }
+            return checkBannedOnRead(request, response);
         }
 
         String header = request.getHeader("Authorization");
@@ -86,6 +91,37 @@ public class AuthWriteInterceptor implements HandlerInterceptor {
         }
         // status=0 为封禁；历史数据可能为 null，视为正常（与登录、管理端拦截器一致）
         if (user.getStatus() != null && user.getStatus() == 0) {
+            return reject(response, HttpStatus.FORBIDDEN, "账户已被禁用");
+        }
+        return true;
+    }
+
+    /**
+     * 读请求：只有携带可解析的 Bearer token 且对应用户已封禁时才拒绝。
+     * 无 token、token 无效、用户不存在都放行——公开读接口本来就允许匿名，
+     * 需要登录的读接口由各 Controller 自行返回 401，这里不改变既有语义。
+     */
+    private boolean checkBannedOnRead(HttpServletRequest request, HttpServletResponse response)
+            throws Exception {
+        String header = request.getHeader("Authorization");
+        if (header == null || !header.startsWith("Bearer ")) {
+            return true;
+        }
+        String token = header.substring(7).trim();
+        if (token.isEmpty()) {
+            return true;
+        }
+        String username;
+        try {
+            username = jwtUtil.getUsernameFromToken(token);
+        } catch (Exception e) {
+            username = null;
+        }
+        if (username == null) {
+            return true;
+        }
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user != null && user.getStatus() != null && user.getStatus() == 0) {
             return reject(response, HttpStatus.FORBIDDEN, "账户已被禁用");
         }
         return true;
