@@ -12,6 +12,7 @@ import './assets/theme.css'
 import './assets/glass.css'
 import './assets/auth.css'
 import './assets/reveal.css'
+import './assets/safe-area.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import { installUploadsRewriter } from './utils/apiBase'
 

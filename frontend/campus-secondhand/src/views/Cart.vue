@@ -360,7 +360,7 @@ onMounted(loadCart)
 /* 底部结算栏 */
 .cart-bar {
   position: sticky;
-  bottom: var(--space-4);
+  bottom: calc(var(--space-4) + var(--safe-bottom, 0px));
   margin-top: var(--space-6);
   display: flex;
   align-items: center;

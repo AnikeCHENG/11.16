@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .app-navbar {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  position: fixed; top: var(--safe-top, 0px); left: var(--safe-left, 0px); right: var(--safe-right, 0px); z-index: 100;
   height: var(--header-h);
   background: rgba(10, 16, 19, 0.55);
   -webkit-backdrop-filter: blur(18px) saturate(140%);

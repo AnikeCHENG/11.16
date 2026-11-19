@@ -474,7 +474,7 @@ onBeforeUnmount(() => clearInterval(timer))
 /* ---------- 极简 header ---------- */
 .pay-header {
   position: sticky;
-  top: 0;
+  top: var(--safe-top, 0px);
   z-index: 10;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -547,7 +547,7 @@ onBeforeUnmount(() => clearInterval(timer))
   flex-direction: column;
   gap: var(--space-4);
   position: sticky;
-  top: calc(56px + var(--space-5));
+  top: calc(56px + var(--space-5) + var(--safe-top, 0px));
 }
 
 .block-title {

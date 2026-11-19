@@ -959,7 +959,7 @@ onBeforeUnmount(() => {
     position: sticky;
     bottom: 0;
     background: var(--surface, #fff);
-    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    padding: 12px 16px calc(12px + var(--safe-bottom, env(safe-area-inset-bottom, 0px)));
   }
   .modal-footer .reject-button,
   .modal-footer .approve-button { flex: 1; padding: 12px 16px; font-size: 15px; }

@@ -656,7 +656,7 @@ onMounted(() => {
 .detail-main { max-width: 1080px; }
 .detail { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-8); }
 
-.gallery { position: sticky; top: calc(var(--header-h) + var(--space-6)); height: fit-content; }
+.gallery { position: sticky; top: calc(var(--header-h) + var(--space-6) + var(--safe-top, 0px)); height: fit-content; }
 .main-image { width: 100%; aspect-ratio: 1; border-radius: var(--radius-lg); overflow: hidden; background: var(--surface-3); border: 1px solid var(--border); }
 .main-image img { width: 100%; height: 100%; object-fit: cover; }
 .thumbnails { display: flex; gap: var(--space-2); overflow-x: auto; margin-top: var(--space-3); }

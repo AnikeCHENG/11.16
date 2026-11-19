@@ -1015,7 +1015,7 @@ onMounted(async () => {
 }
 
 .plaza-toast {
-  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: calc(32px + var(--safe-bottom, 0px)); left: 50%; transform: translateX(-50%);
   z-index: 1000; padding: 10px 20px; border-radius: var(--radius);
   background: rgba(10, 16, 19, 0.9); color: var(--text); font-size: var(--text-sm);
   border: 1px solid rgba(255, 255, 255, 0.1);

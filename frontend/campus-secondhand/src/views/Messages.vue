@@ -719,7 +719,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   /* 撑满导航以下的视口，聊天面板才能拿到确定高度 */
-  height: calc(100vh - var(--header-h));
+  height: calc(100vh - var(--header-h) - var(--safe-top, 0px) - var(--safe-bottom, 0px));
   min-height: 420px;
   overflow: hidden;
 }
