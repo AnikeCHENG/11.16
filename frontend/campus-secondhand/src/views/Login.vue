@@ -111,6 +111,8 @@
         还没有账号？
         <router-link to="/register" class="text-link">立即注册</router-link>
       </p>
+
+      <ServerAddressSetting v-if="nativeApp" />
     </div>
   </AuthShell>
 </template>
@@ -123,11 +125,15 @@ import { useUserStore } from '../stores/user'
 import auth from '../api/auth'
 import AuthShell from '../components/AuthShell.vue'
 import BrandLogo from '../components/BrandLogo.vue'
+import ServerAddressSetting from '../components/ServerAddressSetting.vue'
+import { isNativeApp } from '@/utils/apiBase'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const loginForm = ref(null)
+// 仅 Android App 显示「服务器地址」设置；浏览器里不渲染
+const nativeApp = isNativeApp()
 const loading = ref(false)
 const showPassword = ref(false)
 

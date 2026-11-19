@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE || '/api'
+import { API_BASE as BASE } from '@/utils/apiBase'
 
 /**
  * 购物车与批量收银台接口。
