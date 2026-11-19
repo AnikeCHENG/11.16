@@ -186,6 +186,10 @@ cd frontend/campus-secondhand
 npm run lint
 npm run test:unit -- --run
 npm run build
+
+# 端到端冒烟（需前后端已启动；账号走环境变量，不入库）
+npx playwright install chromium   # 首次
+E2E_ADMIN_USER=管理员账号 E2E_ADMIN_PASSWORD=口令 npm run test:e2e
 ```
 
 ### 安全相关的默认行为
