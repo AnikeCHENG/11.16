@@ -5,6 +5,7 @@ import com.example.campussecondhand.dto.UserDTO;
 import com.example.campussecondhand.repository.UserRepository;
 import com.example.campussecondhand.entity.User;
 import com.example.campussecondhand.service.EmailService;
+import com.example.campussecondhand.service.LoginAttemptService;
 import com.example.campussecondhand.service.UserService;
 import com.example.campussecondhand.util.JwtUtil;
 import com.example.campussecondhand.util.StudentNoMasker;
@@ -15,6 +16,9 @@ import org.springframework.web.bind.annotation.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -38,6 +42,9 @@ public class AuthController {
     private PasswordEncoder passwordEncoder;
 
     @Autowired
+    private LoginAttemptService loginAttemptService;
+
+    @Autowired
     private JwtUtil jwtUtil;
 
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
@@ -51,12 +58,22 @@ public class AuthController {
             if (username == null || username.isBlank() || password == null || password.isBlank()) {
                 return ResponseEntity.ok(ApiResponse.error(400, "用户名和密码不能为空"));
             }
+            // 防暴力破解：锁定期间直接拒绝，不做密码比对（也不泄露账号是否存在）
+            String clientIp = currentClientIp();
+            long lockedSeconds = loginAttemptService.lockedSeconds(username, clientIp);
+            if (lockedSeconds > 0) {
+                long minutes = Math.max(1, (lockedSeconds + 59) / 60);
+                return ResponseEntity.ok(ApiResponse.error(429,
+                        "登录失败次数过多，请 " + minutes + " 分钟后再试"));
+            }
             Optional<User> userOpt = userService.findByUsername(username);
             if (userOpt.isPresent()) {
                 User user = userOpt.get();
                 if (!passwordEncoder.matches(password, user.getPassword())) {
+                    loginAttemptService.recordFailure(username, clientIp);
                     return ResponseEntity.ok(ApiResponse.error(401, "用户名或密码错误"));
                 }
+                loginAttemptService.recordSuccess(username);
                 if (user.getStatus() != null && user.getStatus() == 0) {
                     return ResponseEntity.ok(ApiResponse.error(403, "账户已被禁用"));
                 }
@@ -85,6 +102,8 @@ public class AuthController {
                 loginResult.put("user", loginUser);
                 return ResponseEntity.ok(ApiResponse.success("登录成功", loginResult));
             } else {
+                // 不存在的用户名同样计数，锁定行为与真实账号一致，避免成为枚举信号
+                loginAttemptService.recordFailure(username, clientIp);
                 return ResponseEntity.ok(ApiResponse.error(401, "用户名或密码错误"));
             }
         } catch (Exception e) {
@@ -96,6 +115,18 @@ public class AuthController {
 
 
 
+
+    /**
+     * 取客户端 IP 供登录频控使用。只信任直连地址：本项目没有可信反向代理配置，
+     * 读 X-Forwarded-For 会让攻击者每次伪造一个新 IP 绕过 IP 维度的计数。
+     */
+    private static String currentClientIp() {
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
+            HttpServletRequest request = attrs.getRequest();
+            return request.getRemoteAddr();
+        }
+        return null;
+    }
 
     // 发送邮箱验证码
     @PostMapping("/send-code")
