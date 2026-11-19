@@ -639,7 +639,7 @@ async function refreshCurrentConversation() {
       await nextTick()
       scrollToBottom()
     }
-  } catch (e) {
+  } catch {
     /* 轮询失败静默，等下一轮 */
   } finally {
     refreshingChat = false
