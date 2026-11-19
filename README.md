@@ -34,6 +34,7 @@
 | 状态管理 | Pinia | 3.0 |
 | 路由 | Vue Router | 4.6 |
 | 测试 | Vitest + Playwright | - |
+| 移动端打包 | Capacitor（Android） | 8.6 |
 
 ---
 
@@ -191,6 +192,41 @@ npm run build
 npx playwright install chromium   # 首次
 E2E_ADMIN_USER=管理员账号 E2E_ADMIN_PASSWORD=口令 npm run test:e2e
 ```
+
+### 6. Android 安装包（Capacitor）
+
+前端用 Capacitor 8 打包成 Android App（工程在 `frontend/campus-secondhand/android/`，包名
+`com.campus.secondhand`）。App 里的页面运行在 WebView 的 `http://localhost` 上，**不能**再用相对路径
+访问后端，所以安装包里必须写入一个手机能访问到的后端地址。
+
+**后端地址怎么生效**（`src/utils/apiBase.js`，优先级从高到低）：
+
+1. App 登录页底部「服务器地址 · 修改」里保存的地址（只在 App 里显示，存于本机 localStorage，可「测试连接」，
+   改完自动重新加载；「恢复默认」回到打包时的地址）——现场换网络不用重新打包；
+2. 构建时的 `VITE_API_BASE_URL`（`.env.android` 里默认 `http://10.0.2.2:8080`，即 Android 模拟器访问宿主机）；
+3. 都没有时为空：走相对路径 `/api`、`/uploads`。**Web 构建不设置该变量，行为与以前完全一致。**
+
+接口请求、上传以及 `/uploads/...` 图片都会使用这个地址。Android 已允许明文 HTTP
+（`android/app/src/main/res/xml/network_security_config.xml`），因为演示后端通常是 `http://局域网IP:8080`；
+正式上线换成 HTTPS 后应去掉这项放行。
+
+**环境要求**：Node 22+、JDK 21、Android SDK（platform 36、build-tools 35/36），并设置 `ANDROID_HOME`。
+
+```bash
+cd frontend/campus-secondhand
+# 默认地址（模拟器 → 本机后端）
+npm run apk:debug
+# 现场演示：手机和电脑连同一 Wi-Fi，用电脑的局域网 IP（后端需监听 0.0.0.0，防火墙放行 8080）
+VITE_API_BASE_URL=http://192.168.1.20:8080 npm run apk:debug
+# 已有公网后端
+VITE_API_BASE_URL=https://api.example.com npm run apk:debug
+# 产物：android/app/build/outputs/apk/debug/app-debug.apk（debug 签名，可直接安装）
+```
+
+> `npm run build:android` 会用 android 模式覆盖 `dist/`；之后要部署 Web 版请重新执行 `npm run build`。
+
+安装：把 apk 传到手机，在系统设置里允许“安装未知来源应用”后点击安装；或 `adb install -r app-debug.apk`。
+**App 只是客户端，必须能访问到正在运行的后端**，否则登录页会提示网络错误——此时在「服务器地址」里改成可达的地址即可。
 
 ### 安全相关的默认行为
 
