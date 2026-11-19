@@ -913,4 +913,11 @@ watch(() => route.fullPath, () => {
   .filters-panel .textarea,
   .filters-panel .select { transition: none; }
 }
+
+/* 375px 实测分页条 385px 宽导致整页横向滚动：窄屏允许换行 */
+@media (max-width: 640px) {
+  .pager { max-width: 100%; overflow: hidden; }
+  .pager :deep(.el-pagination) { flex-wrap: wrap; justify-content: center; row-gap: 8px; }
+  .pager :deep(.el-pagination .el-pagination__total) { flex-basis: 100%; text-align: center; margin: 0; }
+}
 </style>
