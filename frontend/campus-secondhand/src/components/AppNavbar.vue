@@ -500,6 +500,29 @@ onBeforeUnmount(() => {
   /* 窄屏上 6 项会挤爆一行：管理入口只留盾牌图标，
      语义由链接上的 aria-label / title 兜底 */
   .nb-link--admin .nb-admin-label { display: none; }
+
+  /* 375px 实测：链接 + 购物车 + 发布 + 头像总宽超出视口，头像菜单（我的/退出）
+     被挤到屏幕外。右侧操作区永不收缩，链接区可收缩并在极端情况下横向滑动。 */
+  .navbar-inner { gap: var(--space-2); padding: 0 10px; }
+  .nb-links {
+    min-width: 0;
+    flex: 1 1 auto;
+    align-self: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nb-links::-webkit-scrollbar { display: none; }
+  .nb-link { padding: 8px 6px; white-space: nowrap; }
+  .nb-actions { gap: 4px; }
+  .nb-icon-btn { width: 34px; height: 34px; }
+  .nb-publish { padding: 6px 12px; white-space: nowrap; }
+  .nb-avatar { width: 32px; height: 32px; }
+}
+@media (max-width: 420px) {
+  /* 「首页」链接已提供同一入口，最窄屏收起 Logo 把宽度让给导航项 */
+  .nb-logo { display: none; }
 }
 
 /* 降级为静态等价物 */
