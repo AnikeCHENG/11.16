@@ -117,7 +117,7 @@ scope 用模块名（`auth` / `state` / `security` / `ui` / `db`）。
 
 ## 8. 已知文档漂移（README 不可信处）
 
-1. README 写库名 `waste_recycle_platform`，实际是 `campus_secondhand`。
+1. ~~README 写库名 `waste_recycle_platform`，实际是 `campus_secondhand`。~~ 已修正：README「快速开始」改为 `campus_secondhand` + `docker-compose.yml` 导入 `data-seed` dump。
 2. README 的包结构漏了 `enums/` 和 `task/`。
 3. README 完全没提 plaza / cart / payment / report / review 这几个模块。
 4. ~~`application.properties` 中 `spring.sql.init.mode=always`，但其上方注释写着"设为 never 跳过自动初始化"，**注释与实际相反**。~~ 已修正：注释改为如实说明 mode=always 只跑 `plaza-schema.sql`，其余 migration 需手工执行。
