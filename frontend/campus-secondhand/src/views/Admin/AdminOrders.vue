@@ -519,4 +519,13 @@ onMounted(() => {
 .pagination-button:disabled { opacity: 0.5; }
 .pagination-info { font-size: var(--text-sm); color: var(--text-2); }
 .no-orders { text-align: center; padding: var(--space-12); color: var(--text-3); font-size: var(--text-base); }
+.search-input { min-width: 0; }
+
+@media (max-width: 640px) {
+  .admin-orders { padding: var(--space-4); }
+  .order-search { flex-wrap: wrap; }
+  .order-search .search-input { flex: 1 1 100%; width: 100%; box-sizing: border-box; }
+  .order-search .filter-select { flex: 1 1 0; min-width: 0; }
+  .order-search .search-btn { flex: 0 0 auto; }
+}
 </style>
