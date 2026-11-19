@@ -19,8 +19,10 @@ import java.util.Locale;
  * <ul>
  *   <li>按<b>用户名</b>计数：窗口内失败达到 {@code maxFailures}（默认 5）次即锁定
  *       {@code lockMinutes}（默认 15）分钟，锁定期间即使密码正确也拒绝；</li>
- *   <li>按<b>客户端 IP</b> 计数：窗口内失败达到 {@code maxIpFailures}（默认 30）次锁定该 IP，
- *       用来挡「一个密码试遍所有账号」的喷洒攻击；</li>
+ *   <li>按<b>客户端 IP</b> 计数（{@code app.login.max-ip-failures}，<b>默认 0 = 关闭</b>）：
+ *       用来挡「一个密码试遍所有账号」的喷洒攻击。默认关闭是因为本项目只信任直连地址，
+ *       经 Vite 代理 / Nginx 转发时所有用户共用同一个来源 IP，开启后 N 次失败会把所有人锁在门外。
+ *       直连部署或配好可信代理后再按需打开；</li>
  *   <li>不存在的用户名同样计数——否则「锁定 / 不锁定」就成了账号枚举信号；</li>
  *   <li>登录成功清零该用户名的计数（IP 计数不清，避免攻击者用自己的账号刷掉 IP 计数）。</li>
  * </ul>
@@ -46,7 +48,7 @@ public class LoginAttemptService {
 
     public LoginAttemptService(StringRedisTemplate redis,
                                @Value("${app.login.max-failures:5}") int maxFailures,
-                               @Value("${app.login.max-ip-failures:30}") int maxIpFailures,
+                               @Value("${app.login.max-ip-failures:0}") int maxIpFailures,
                                @Value("${app.login.window-minutes:15}") long windowMinutes,
                                @Value("${app.login.lock-minutes:15}") long lockMinutes) {
         this.redis = redis;
@@ -64,7 +66,7 @@ public class LoginAttemptService {
     public long lockedSeconds(String username, String ip) {
         try {
             long userTtl = ttl(USER_LOCK + normalize(username));
-            long ipTtl = ip == null ? 0 : ttl(IP_LOCK + ip);
+            long ipTtl = ip == null || maxIpFailures <= 0 ? 0 : ttl(IP_LOCK + ip);
             return Math.max(userTtl, ipTtl);
         } catch (RuntimeException e) {
             log.warn("登录频控读取失败，按未锁定放行: {}", e.getMessage());
@@ -81,7 +83,7 @@ public class LoginAttemptService {
                 redis.delete(USER_FAIL + user);
                 log.warn("登录失败次数过多，锁定账号 {} 分钟: username={}, ip={}", lock.toMinutes(), user, ip);
             }
-            if (ip != null && bump(IP_FAIL + ip) >= maxIpFailures) {
+            if (ip != null && maxIpFailures > 0 && bump(IP_FAIL + ip) >= maxIpFailures) {
                 redis.opsForValue().set(IP_LOCK + ip, "1", lock);
                 redis.delete(IP_FAIL + ip);
                 log.warn("登录失败次数过多，锁定 IP {} 分钟: ip={}", lock.toMinutes(), ip);

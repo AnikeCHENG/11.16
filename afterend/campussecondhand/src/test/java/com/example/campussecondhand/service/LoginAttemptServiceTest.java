@@ -82,6 +82,16 @@ class LoginAttemptServiceTest {
     }
 
     @Test
+    @DisplayName("IP 维度默认关闭（0）：代理后所有人同一 IP 时不会被集体锁定")
+    void ipLimitDisabledWhenZero() {
+        LoginAttemptService noIp = new LoginAttemptService(redis, 5, 0, 15, 15);
+        for (int i = 0; i < 100; i++) {
+            noIp.recordFailure("user" + i, "127.0.0.1");
+        }
+        assertThat(noIp.lockedSeconds("innocent", "127.0.0.1")).isZero();
+    }
+
+    @Test
     @DisplayName("Redis 故障时放行而不是让所有人无法登录")
     void failsOpenWhenRedisDown() {
         when(redis.getExpire(anyString())).thenThrow(new RuntimeException("redis down"));
