@@ -1,9 +1,6 @@
 <template>
   <div class="admin-sv">
-    <div class="admin-header">
-      <h1>学生认证审核（支付宝截图辅助认证）</h1>
-      <router-link to="/admin" class="back-link">返回控制面板</router-link>
-    </div>
+    <AdminPageHeader title="学生认证审核（支付宝截图辅助认证）" />
 
     <!-- 筛选 -->
     <div class="filter-section">
@@ -57,16 +54,16 @@
         </thead>
         <tbody>
           <tr v-for="record in records" :key="record.id">
-            <td>{{ record.id }}</td>
-            <td>{{ record.username || `用户${record.userId}` }}</td>
-            <td>{{ record.realName }}</td>
-            <td>
+            <td data-label="ID">{{ record.id }}</td>
+            <td data-label="申请人">{{ record.username || `用户${record.userId}` }}</td>
+            <td data-label="姓名">{{ record.realName }}</td>
+            <td data-label="学校">
               <span class="school-text" :title="record.school">{{ record.school }}</span>
             </td>
-            <td>{{ record.studentNo || '—' }}</td>
-            <td>{{ record.enrollmentYear }}</td>
-            <td>{{ formatDate(record.createdAt) }}</td>
-            <td>
+            <td data-label="学号">{{ record.studentNo || '—' }}</td>
+            <td data-label="入学年份">{{ record.enrollmentYear }}</td>
+            <td data-label="提交时间">{{ formatDate(record.createdAt) }}</td>
+            <td data-label="状态">
               <span class="status-badge" :class="getStatusClass(record.status)">
                 {{ getStatusText(record.status) }}
               </span>
@@ -74,7 +71,7 @@
                 理由：{{ record.rejectReason }}
               </p>
             </td>
-            <td>
+            <td data-label="操作" class="actions-cell">
               <button
                 v-if="record.status === 'pending'"
                 class="action-button review-button"
@@ -110,6 +107,10 @@
         <div class="modal-body">
           <div v-if="detailLoading" class="loading-container">
             <div class="loading-spinner"></div>
+          </div>
+          <div v-else-if="detailError" class="error-container" role="alert">
+            <p>{{ detailError }}</p>
+            <button class="retry-button" @click="loadDetail">重试</button>
           </div>
           <template v-else-if="detail">
             <div class="detail-summary">
@@ -149,13 +150,27 @@
 
             <div class="form-group">
               <label class="form-label">支付宝学生认证结果截图</label>
+              <div v-if="proofLoading" class="proof-state" data-test="proof-loading">
+                <div class="loading-spinner small"></div>
+                <span>截图加载中…</span>
+              </div>
+              <div v-else-if="proofError" class="proof-error" role="alert" data-test="proof-error">
+                <p class="proof-error-title">截图加载失败：{{ proofError }}</p>
+                <button type="button" class="retry-button proof-retry" data-test="proof-retry" @click="retryProof">
+                  重新加载
+                </button>
+                <p v-if="isPending" class="form-hint">
+                  截图无法取回时无法核对身份，可直接驳回并要求申请人重新提交截图。
+                </p>
+              </div>
               <img
-                v-if="proofUrl"
+                v-else-if="proofUrl"
                 :src="proofUrl"
                 alt="认证截图"
                 class="proof-image"
+                data-test="proof-image"
               />
-              <p v-else class="form-hint">{{ detail.proofImage ? '截图加载中…' : '无截图' }}</p>
+              <p v-else class="form-hint">无截图</p>
               <p class="form-hint">
                 请核对截图中的学校名称与认证状态与申请人填写信息一致。
                 截图与资料仅用于学生身份审核，且不通过公开 URL 暴露。
@@ -201,7 +216,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import admin from '../../api/admin'
 import { ElMessage } from 'element-plus'
 
@@ -218,11 +234,21 @@ const showModal = ref(false)
 const currentRecord = ref(null)
 const detail = ref(null)
 const detailLoading = ref(false)
+const detailError = ref('')
 const submitting = ref(false)
 const rejectReason = ref('')
 const reasonError = ref('')
-/** 截图的 objectURL：截图存于私有目录，只能带鉴权取回，不能直接用 <img src> */
+/**
+ * 截图地址：新数据存于私有目录，只能带鉴权取回再转 objectURL；
+ * 历史数据若是 /uploads/... 公开路径，直接作为 <img src>。
+ */
 const proofUrl = ref('')
+/** proofUrl 是否为本组件创建的 objectURL（只有它需要 revoke） */
+let proofIsObjectUrl = false
+const proofLoading = ref(false)
+const proofError = ref('')
+/** 每次打开/切换记录自增；迟到的响应据此丢弃，避免串到别的记录上 */
+let requestSeq = 0
 
 const totalPages = computed(() => Math.ceil(total.value / pageSize.value))
 const isPending = computed(() => currentRecord.value?.status === 'pending')
@@ -271,59 +297,164 @@ const changePage = (newPage) => {
 }
 
 const openReviewModal = async (record) => {
+  requestSeq += 1
   currentRecord.value = record
   detail.value = null
   rejectReason.value = ''
   reasonError.value = ''
-  releaseProofUrl()
+  resetProof()
   showModal.value = true
-  // 详情接口返回未脱敏的姓名与学号，供管理员与截图比对
+  await loadDetail()
+}
+
+/** 详情接口返回未脱敏的姓名与学号，供管理员与截图比对 */
+const loadDetail = async () => {
+  const record = currentRecord.value
+  if (!record) return
+  const seq = requestSeq
+  detailLoading.value = true
+  detailError.value = ''
   try {
-    detailLoading.value = true
     const response = await admin.get(`/student-verifications/${record.id}`)
+    if (seq !== requestSeq) return
     detail.value = response.data?.data || null
-    await loadProof(record.id)
+    if (!detail.value) detailError.value = '未获取到申请详情'
   } catch (err) {
-    console.error('获取认证申请详情失败:', err)
-    ElMessage.error(err?.response?.data?.message || '获取详情失败')
+    if (seq !== requestSeq) return
+    detailError.value = err?.response?.data?.message || err?.message || '获取详情失败'
   } finally {
-    detailLoading.value = false
+    if (seq === requestSeq) detailLoading.value = false
   }
+  // 详情与截图分开加载：截图失败不影响查看资料与驳回
+  if (seq === requestSeq && detail.value) {
+    await loadProof()
+  }
+}
+
+/** 历史数据可能存的是公开路径（/uploads/...）或完整 URL，可直接渲染 */
+const isPublicProofPath = (value) =>
+  typeof value === 'string' && (/^\/?uploads\//.test(value) || /^https?:\/\//.test(value))
+
+/**
+ * 从错误响应里取后端提示。
+ * <p>proof 接口按 blob 请求，失败时 body 也是 Blob：可能是 ApiResponse JSON，
+ * 也可能是纯文本（当前后端 400 直接回 "图片不存在" 字节）。</p>
+ */
+const readBlobText = (blob) => {
+  if (typeof blob.text === 'function') return blob.text()
+  // 旧浏览器 / jsdom 的 Blob 没有 text()，退回 FileReader
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })
+}
+
+const isBlob = (value) =>
+  !!value &&
+  ((typeof Blob !== 'undefined' && value instanceof Blob) || typeof value.text === 'function')
+
+const extractErrorMessage = async (err) => {
+  const data = err?.response?.data
+  let text = ''
+  if (isBlob(data)) {
+    try {
+      text = (await readBlobText(data)).trim()
+    } catch {
+      text = ''
+    }
+  } else if (typeof data === 'string') {
+    text = data.trim()
+  } else if (data && typeof data.message === 'string') {
+    return data.message
+  }
+  if (text) {
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed.message === 'string' && parsed.message) return parsed.message
+    } catch {
+      // 非 JSON：短文本直接作为提示，HTML 错误页等长内容不展示
+      if (text.length <= 200 && !text.startsWith('<')) return text
+    }
+  }
+  const status = err?.response?.status
+  if (status === 404) return '图片不存在'
+  if (status === 403) return '无权限：需要管理员身份'
+  if (!err?.response) return '网络错误，请检查网络连接'
+  return err?.message || '未知错误'
 }
 
 /**
- * 取回认证截图。
- *
- * <p>截图存放在私有目录，没有公开 URL，只能带管理员凭证取回二进制，
- * 再用 objectURL 交给 <img>。admin 实例已自动注入 Authorization 头。</p>
+ * 取回认证截图。admin 实例已自动注入 Authorization 头；
+ * silent 让全局拦截器不再弹 toast，失败原因在弹窗内就地展示并可重试。
  */
-const loadProof = async (id) => {
+const loadProof = async () => {
+  const record = currentRecord.value
+  const info = detail.value
+  if (!record || !info) return
+  const seq = requestSeq
+  releaseProofUrl()
+  proofError.value = ''
+
+  if (!info.proofImage) return
+  if (isPublicProofPath(info.proofImage)) {
+    proofUrl.value = /^https?:\/\//.test(info.proofImage)
+      ? info.proofImage
+      : `/${info.proofImage.replace(/^\/+/, '')}`
+    proofIsObjectUrl = false
+    return
+  }
+
+  proofLoading.value = true
   try {
-    const response = await admin.get(`/student-verifications/${id}/proof`, {
-      responseType: 'blob'
+    const response = await admin.get(`/student-verifications/${record.id}/proof`, {
+      responseType: 'blob',
+      silent: true
     })
-    proofUrl.value = URL.createObjectURL(response.data)
+    const url = URL.createObjectURL(response.data)
+    if (seq !== requestSeq) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    proofUrl.value = url
+    proofIsObjectUrl = true
   } catch (err) {
-    console.error('获取认证截图失败:', err)
-    proofUrl.value = ''
+    const message = await extractErrorMessage(err)
+    if (seq !== requestSeq) return
+    proofError.value = message
+  } finally {
+    if (seq === requestSeq) proofLoading.value = false
   }
 }
 
-/** 释放上一张截图的 objectURL，避免内存泄漏 */
+const retryProof = () => loadProof()
+
+/** 释放截图 objectURL，避免内存泄漏；公开路径无需 revoke */
 const releaseProofUrl = () => {
-  if (proofUrl.value) {
+  if (proofUrl.value && proofIsObjectUrl) {
     URL.revokeObjectURL(proofUrl.value)
-    proofUrl.value = ''
   }
+  proofUrl.value = ''
+  proofIsObjectUrl = false
+}
+
+const resetProof = () => {
+  releaseProofUrl()
+  proofLoading.value = false
+  proofError.value = ''
 }
 
 const closeModal = () => {
   if (submitting.value) return
+  requestSeq += 1
   showModal.value = false
   currentRecord.value = null
   detail.value = null
+  detailError.value = ''
+  detailLoading.value = false
   reasonError.value = ''
-  releaseProofUrl()
+  resetProof()
 }
 
 /**
@@ -345,8 +476,8 @@ const submitReview = async (action) => {
     })
     if (response.data && response.data.code === 200) {
       ElMessage.success(response.data.message || '审核完成')
-      showModal.value = false
-      currentRecord.value = null
+      submitting.value = false
+      closeModal()
       await fetchList()
     }
   } catch (err) {
@@ -387,6 +518,11 @@ const formatDate = (dateString) => {
 onMounted(() => {
   fetchList()
 })
+
+onBeforeUnmount(() => {
+  requestSeq += 1
+  releaseProofUrl()
+})
 </script>
 
 <style scoped>
@@ -396,34 +532,6 @@ onMounted(() => {
   padding: var(--space-6, 24px);
   font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif);
 }
-
-.admin-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--space-5, 32px);
-  padding-bottom: var(--space-4, 16px);
-  border-bottom: 1px solid var(--border, #e0e0e0);
-}
-
-.admin-header h1 {
-  font-size: var(--text-2xl, 24px);
-  font-weight: var(--weight-semibold, 600);
-  color: var(--text, #333);
-  margin: 0;
-}
-
-.back-link {
-  text-decoration: none;
-  color: var(--text, #333);
-  background: var(--surface, #f5f5f5);
-  border: 1px solid var(--border-strong, #e0e0e0);
-  border-radius: var(--radius, 8px);
-  padding: 8px 14px;
-  font-size: var(--text-sm, 14px);
-}
-
-.back-link:hover { background: var(--surface-2, #e0e0e0); }
 
 .filter-section { margin-bottom: var(--space-4, 24px); }
 
@@ -630,7 +738,10 @@ onMounted(() => {
   width: 90%;
   max-width: 640px;
   max-height: 85vh;
-  overflow-y: auto;
+  /* 头/尾固定，只有 body 滚动：「拒绝/通过」始终可见 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   box-shadow: var(--shadow-md, 0 25px 50px -12px rgba(0, 0, 0, 0.5));
 }
 
@@ -663,7 +774,8 @@ onMounted(() => {
 
 .close-button:hover { background: var(--surface-3, #f5f5f5); color: var(--text, #333); }
 
-.modal-body { padding: 24px; }
+.modal-body { padding: 24px; overflow-y: auto; flex: 1 1 auto; min-height: 0; -webkit-overflow-scrolling: touch; }
+.modal-header, .modal-footer { flex-shrink: 0; }
 
 .detail-summary {
   display: flex;
@@ -761,5 +873,95 @@ onMounted(() => {
   .search-input { min-width: auto; }
   .sv-table th, .sv-table td { padding: 8px 12px; font-size: 12px; }
   .pagination { flex-wrap: wrap; }
+}
+
+.proof-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2, #666);
+  font-size: var(--text-sm, 14px);
+  padding: 12px 0;
+}
+
+.loading-spinner.small { width: 18px; height: 18px; border-width: 2px; margin: 0; }
+
+.proof-error {
+  padding: 12px 14px;
+  border: 1px solid var(--danger, #ef4444);
+  background: var(--danger-soft, rgba(239, 68, 68, 0.08));
+  border-radius: var(--radius, 8px);
+}
+
+.proof-error-title {
+  margin: 0;
+  color: var(--danger, #dc2626);
+  font-weight: var(--weight-medium, 500);
+  font-size: var(--text-sm, 14px);
+}
+
+.proof-error .proof-retry { margin-top: 10px; }
+
+@media (max-width: 640px) {
+  .admin-sv { padding: 12px; }
+
+  /* 列表改卡片：每行一张卡，审核/详情按钮始终在可视区 */
+  .table-container { overflow-x: visible; background: transparent; border: none; }
+  .sv-table thead { display: none; }
+  .sv-table, .sv-table tbody, .sv-table tr, .sv-table td { display: block; width: 100%; }
+  .sv-table tr {
+    margin-bottom: 12px;
+    padding: 6px 12px;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e0e0e0);
+    border-radius: var(--radius-lg, 12px);
+  }
+  .sv-table tr:hover td { background: transparent; }
+  .sv-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 8px 0;
+    font-size: 13px;
+    text-align: right;
+    border-bottom: 1px dashed var(--border, #f0f0f0);
+    box-sizing: border-box;
+  }
+  .sv-table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    color: var(--text-3, #9a9a92);
+    text-align: left;
+  }
+  .sv-table td:last-child { border-bottom: none; }
+  .school-text { max-width: 200px; }
+  .sv-table td.actions-cell { justify-content: flex-end; gap: 8px; padding-top: 10px; }
+  .sv-table td.actions-cell::before { display: none; }
+  .sv-table td.actions-cell .action-button { flex: 1; margin-right: 0; padding: 10px 12px; font-size: 14px; }
+
+  /* 弹窗全屏，底部操作栏 sticky + 安全区 */
+  .modal-overlay { align-items: stretch; }
+  .modal-content {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    height: 100dvh;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+  }
+  .modal-header { padding: 14px 16px; }
+  .modal-header h2 { font-size: 17px; }
+  .modal-body { padding: 16px; }
+  .detail-row { gap: 10px; }
+  .modal-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface, #fff);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .modal-footer .reject-button,
+  .modal-footer .approve-button { flex: 1; padding: 12px 16px; font-size: 15px; }
 }
 </style>

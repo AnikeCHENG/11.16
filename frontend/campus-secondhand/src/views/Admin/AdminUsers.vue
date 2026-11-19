@@ -1,9 +1,6 @@
 <template>
   <div class="admin-users">
-    <div class="admin-header">
-      <h1>用户管理</h1>
-      <router-link to="/admin" class="back-link">返回控制面板</router-link>
-    </div>
+    <AdminPageHeader title="用户管理" />
     
     <div class="user-search">
       <input 
@@ -94,6 +91,7 @@
 </template>
 
 <script setup>
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import { ref, computed, onMounted } from 'vue'
 import admin from '../../api/admin'
 
@@ -165,31 +163,6 @@ onMounted(() => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
-}
-
-.admin-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-}
-
-.admin-header h1 {
-  font-size: 2rem;
-  color: #333;
-}
-
-.back-link {
-  text-decoration: none;
-  color: #333;
-  padding: 10px 15px;
-  background-color: #f5f5f5;
-  border-radius: 5px;
-  transition: all 0.3s ease;
-}
-
-.back-link:hover {
-  background-color: #e0e0e0;
 }
 
 /* 搜索样式 */
@@ -325,10 +298,6 @@ onMounted(() => {
 <!-- ===== 简约浅色主题覆盖 ===== -->
 <style scoped>
 .admin-users { max-width: var(--container); padding: var(--space-6); }
-.admin-header { margin-bottom: var(--space-5); }
-.admin-header h1 { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; color: var(--text); }
-.back-link { color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px 14px; font-size: var(--text-sm); }
-.back-link:hover { background: var(--surface-2); }
 
 .user-search { display: flex; gap: var(--space-3); margin-bottom: var(--space-5); }
 .search-input { flex: 1; padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: var(--text-base); color: var(--text); background: var(--surface); }

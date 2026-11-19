@@ -1,6 +1,6 @@
 <template>
   <div class="admin-orders">
-    <h1>订单管理</h1>
+    <AdminPageHeader title="订单管理" />
     
     <div class="order-search">
       <input 
@@ -148,6 +148,7 @@
 </template>
 
 <script setup>
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import { ref, computed, onMounted } from 'vue'
 import admin from '../../api/admin'
 
@@ -294,12 +295,6 @@ onMounted(() => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
-}
-
-.admin-orders h1 {
-  font-size: 2rem;
-  color: #333;
-  margin-bottom: 30px;
 }
 
 .order-search {
@@ -492,7 +487,6 @@ onMounted(() => {
 <!-- ===== 简约浅色主题覆盖 ===== -->
 <style scoped>
 .admin-orders { max-width: var(--container); padding: var(--space-6); }
-.admin-orders h1 { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; color: var(--text); margin-bottom: var(--space-5); }
 .order-search { display: flex; gap: var(--space-3); margin-bottom: var(--space-5); }
 .search-input, .filter-select { flex: 1; padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: var(--text-base); color: var(--text); background: var(--surface); }
 .filter-select { flex: 0 0 auto; }

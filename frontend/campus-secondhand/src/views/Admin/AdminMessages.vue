@@ -1,6 +1,6 @@
 <template>
   <div class="admin-messages">
-    <h1>消息管理</h1>
+    <AdminPageHeader title="消息管理" />
     
     <div class="message-search">
       <input 
@@ -12,15 +12,20 @@
       <button @click="fetchMessages" class="search-btn">搜索</button>
     </div>
     
+    <div v-if="error" class="error-container" role="alert">
+      <p>{{ error }}</p>
+      <button class="pagination-button" @click="fetchMessages">重试</button>
+    </div>
+
     <div class="message-list">
       <div class="message-item" v-for="message in messages" :key="message.id">
         <div class="message-header">
           <h3>消息 #{{ message.id }}</h3>
-          <span class="message-date">{{ formatDate(message.createdAt) }}</span>
+          <span class="message-date">{{ formatDate(message.createdTime) }}</span>
         </div>
         <div class="message-info">
-          <p><strong>发送者:</strong> {{ message.sender?.username || '未知用户' }}</p>
-          <p><strong>接收者:</strong> {{ message.receiver?.username || '未知用户' }}</p>
+          <p class="message-sender"><strong>发送者:</strong> {{ userLabel(message.sender, message.senderId) }}</p>
+          <p class="message-receiver"><strong>接收者:</strong> {{ userLabel(message.receiver, message.receiverId) }}</p>
           <p><strong>内容:</strong> <template v-if="message.msgType === 1">[图片]<template v-if="message.caption"> {{ message.caption }}</template></template><template v-else>{{ message.content }}</template></p>
         </div>
         <div class="message-actions">
@@ -66,13 +71,14 @@
       </button>
     </div>
     
-    <div v-if="messages.length === 0" class="no-messages">
+    <div v-if="!error && !loading && messages.length === 0" class="no-messages">
       <p>暂无消息</p>
     </div>
   </div>
 </template>
 
 <script setup>
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import { ref, computed, onMounted } from 'vue'
 import admin from '../../api/admin'
 
@@ -81,12 +87,16 @@ const searchQuery = ref('')
 const page = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
+const loading = ref(false)
+const error = ref('')
 
 const totalPages = computed(() => {
   return Math.ceil(total.value / pageSize.value)
 })
 
 const fetchMessages = async () => {
+  loading.value = true
+  error.value = ''
   try {
     const response = await admin.get('/messages', {
       params: {
@@ -99,8 +109,11 @@ const fetchMessages = async () => {
       messages.value = response.data.data.list
       total.value = response.data.data.total
     }
-  } catch (error) {
-    console.error('获取消息失败:', error)
+  } catch (err) {
+    console.error('获取消息失败:', err)
+    error.value = err?.response?.data?.message || err?.message || '获取消息失败，请稍后重试'
+  } finally {
+    loading.value = false
   }
 }
 
@@ -123,6 +136,16 @@ const changePage = (newPage) => {
   }
 }
 
+/**
+ * 后端 /api/admin/messages 返回的 sender/receiver 目前恒为 null，只有 senderId/receiverId。
+ * 有用户名用用户名，否则退化为「用户 #id」，不再一律显示「未知用户」。
+ */
+const userLabel = (user, id) => {
+  if (user?.username) return user.username
+  if (id !== null && id !== undefined) return `用户 #${id}`
+  return '未知用户'
+}
+
 const formatDate = (dateString) => {
   if (!dateString) return ''
   const date = new Date(dateString)
@@ -139,12 +162,6 @@ onMounted(() => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
-}
-
-.admin-messages h1 {
-  font-size: 2rem;
-  color: #333;
-  margin-bottom: 30px;
 }
 
 .message-search {
@@ -283,7 +300,6 @@ onMounted(() => {
 <!-- ===== 简约浅色主题覆盖 ===== -->
 <style scoped>
 .admin-messages { max-width: var(--container); padding: var(--space-6); }
-.admin-messages h1 { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; color: var(--text); margin-bottom: var(--space-5); }
 .message-search { display: flex; gap: var(--space-3); margin-bottom: var(--space-5); }
 .search-input { flex: 1; padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: var(--text-base); color: var(--text); background: var(--surface); }
 .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -302,4 +318,14 @@ onMounted(() => {
 .pagination-button:disabled { opacity: 0.5; }
 .pagination-info { font-size: var(--text-sm); color: var(--text-2); }
 .no-messages { text-align: center; padding: var(--space-12); color: var(--text-3); font-size: var(--text-base); }
+.message-info p { overflow-wrap: anywhere; }
+.error-container { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-8) 0; color: var(--danger); }
+
+@media (max-width: 640px) {
+  .admin-messages { padding: var(--space-4); }
+  .message-search { flex-direction: column; align-items: stretch; }
+  .search-input, .search-btn { width: 100%; box-sizing: border-box; }
+  .pagination { flex-wrap: wrap; }
+  .pagination-info { flex-basis: 100%; text-align: center; order: -1; }
+}
 </style>

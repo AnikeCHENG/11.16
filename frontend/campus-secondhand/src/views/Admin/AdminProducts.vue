@@ -1,9 +1,6 @@
 <template>
   <div class="admin-products">
-    <div class="admin-header">
-      <h1>商品管理</h1>
-      <router-link to="/admin" class="back-link">返回控制面板</router-link>
-    </div>
+    <AdminPageHeader title="商品管理" />
     
     <!-- 搜索和筛选 -->
     <div class="filter-section">
@@ -313,6 +310,7 @@
 </template>
 
 <script setup>
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import admin from '../../api/admin'
@@ -691,38 +689,6 @@ onMounted(() => {
   margin: 0 auto;
   padding: 24px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-}
-
-.admin-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 32px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.admin-header h1 {
-  font-size: 24px;
-  font-weight: 600;
-  color: #333;
-  margin: 0;
-}
-
-.back-link {
-  text-decoration: none;
-  color: #333;
-  padding: 10px 16px;
-  background-color: #f5f5f5;
-  border-radius: 8px;
-  transition: all 0.3s ease;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.back-link:hover {
-  background-color: #e0e0e0;
-  transform: translateY(-1px);
 }
 
 /* 筛选部分 */
@@ -1321,10 +1287,6 @@ onMounted(() => {
 <!-- ===== 简约浅色主题覆盖 ===== -->
 <style scoped>
 .admin-products { max-width: var(--container); padding: var(--space-6); font-family: var(--font-sans); }
-.admin-header { border-bottom: 1px solid var(--border); padding-bottom: var(--space-4); margin-bottom: var(--space-5); }
-.admin-header h1 { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; color: var(--text); }
-.back-link { color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px 14px; font-size: var(--text-sm); }
-.back-link:hover { background: var(--surface-2); transform: none; }
 
 .filter-form { gap: var(--space-3); }
 .search-input, .filter-select { padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: var(--text-base); color: var(--text); background: var(--surface); }

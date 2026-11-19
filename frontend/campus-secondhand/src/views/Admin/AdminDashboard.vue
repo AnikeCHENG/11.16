@@ -1,14 +1,15 @@
 <template>
   <div class="admin">
     <div class="page-main">
-      <header class="page-head">
-        <div>
-          <p class="eyebrow">ADMIN</p>
-          <h1 class="page-title">管理控制台</h1>
-          <p class="page-sub">欢迎回来，{{ user?.username }}</p>
-        </div>
-        <router-link to="/" class="btn btn-outline">返回首页</router-link>
-      </header>
+      <AdminPageHeader
+        title="管理控制台"
+        :subtitle="`欢迎回来，${user?.username || ''}`"
+        :back="false"
+      >
+        <template #actions>
+          <router-link to="/" class="btn btn-outline">返回首页</router-link>
+        </template>
+      </AdminPageHeader>
 
       <nav class="admin-menu" aria-label="管理菜单">
         <router-link to="/admin/users" class="menu-item">
@@ -129,6 +130,7 @@
 </template>
 
 <script setup>
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import admin from '../../api/admin'
 import * as echarts from 'echarts/core'
@@ -317,9 +319,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-6); }
-.page-title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; }
-.page-sub { margin-top: var(--space-1); color: var(--text-2); font-size: var(--text-sm); }
 
 .admin-menu { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); margin-bottom: var(--space-8); }
 .menu-item { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-medium); transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }

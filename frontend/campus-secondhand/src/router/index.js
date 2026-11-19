@@ -206,4 +206,52 @@ router.beforeEach(async (to, from, next) => {
   next()
 })
 
+// ============================================================================
+// 懒加载 chunk 失效兜底
+//
+// Vite 重启 / 重新部署后，旧页面里引用的 chunk 哈希已不存在，动态 import 会抛
+// "Failed to fetch dynamically imported module"（Chrome/Firefox）或
+// "Importing a module script failed"（Safari），导航中断，router-view 留白。
+// 这里对同一路径每个会话只自动整页刷新一次，拿到新的入口与 chunk；
+// 刷新后仍失败则不再重试（避免死循环），交给控制台与用户手动刷新。
+// ============================================================================
+export const CHUNK_RELOAD_KEY = 'chunk-reload:'
+const CHUNK_ERROR_PATTERNS = [
+  'Failed to fetch dynamically imported module',
+  'Importing a module script failed',
+  'error loading dynamically imported module'
+]
+
+export function isChunkLoadError(error) {
+  const message = String(error?.message || error || '')
+  return CHUNK_ERROR_PATTERNS.some((pattern) => message.includes(pattern))
+}
+
+export function handleChunkLoadError(error, to, { storage = sessionStorage, reload } = {}) {
+  if (!isChunkLoadError(error)) return false
+  const target = to?.fullPath || window.location.pathname
+  const key = CHUNK_RELOAD_KEY + target
+  try {
+    if (storage.getItem(key)) {
+      console.error('页面资源加载失败，已自动刷新过一次仍失败：', error)
+      return false
+    }
+    storage.setItem(key, String(Date.now()))
+  } catch {
+    // sessionStorage 不可用（隐私模式等）时不自动刷新，避免无法判重导致循环
+    return false
+  }
+  if (reload) {
+    reload(target)
+  } else {
+    // 直接跳到目标路径（而不是 reload 当前页），否则会停留在导航前的页面
+    window.location.assign(target)
+  }
+  return true
+}
+
+router.onError((error, to) => {
+  handleChunkLoadError(error, to)
+})
+
 export default router

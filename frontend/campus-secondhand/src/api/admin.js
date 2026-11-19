@@ -57,6 +57,10 @@ admin.interceptors.response.use(
     return response
   },
   (error) => {
+    // silent：调用方自行在界面上展示失败原因（例如认证截图按 blob 取回失败），不再弹全局 toast
+    if (error.config?.silent) {
+      return Promise.reject(error)
+    }
     const status = error.response?.status
     const message =
       error.response?.data?.message ||
