@@ -7,7 +7,8 @@
         <p class="auth-sub">加入校园二手交易平台</p>
       </header>
 
-      <el-form :model="form" :rules="rules" ref="regForm" class="auth-form stagger">
+      <!-- 与登录页同一修复（DEF-02）：回车提交 -->
+      <el-form :model="form" :rules="rules" ref="regForm" class="auth-form stagger" @submit.prevent="onRegister">
         <div class="field">
           <label class="field-label" for="reg-username">用户名</label>
           <div class="field-icon" aria-hidden="true">
@@ -113,7 +114,7 @@
           </div>
         </div>
 
-        <button type="button" class="btn btn-primary btn-block" :disabled="loading" @click="onRegister">
+        <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
           {{ loading ? '创建中…' : '创建账号' }}
         </button>
       </el-form>
@@ -243,32 +244,37 @@ onUnmounted(() => {
 })
 
 function onRegister() {
+  if (loading.value) return
+  // 同步置位，防止快速连按回车重复提交（校验回调是异步的）
+  loading.value = true
   regForm.value.validate((valid) => {
-    if (valid) {
-      if (form.password !== form.confirm) {
-        ElMessage.error('两次输入的密码不一致')
-        return
-      }
-      loading.value = true
-      auth
-        .register({
-          username: form.username,
-          email: form.email,
-          password: form.password,
-          confirmPassword: form.confirm,
-          code: form.code
-        })
-        .then(() => {
-          ElMessage.success({ message: '注册成功！', type: 'success', duration: 2000 })
-          setTimeout(() => router.push({ path: '/login' }), 1500)
-        })
-        .catch((err) => {
-          ElMessage.error(err.message || '注册失败，请重试')
-        })
-        .finally(() => {
-          loading.value = false
-        })
+    if (!valid) {
+      loading.value = false
+      return
     }
+    if (form.password !== form.confirm) {
+      ElMessage.error('两次输入的密码不一致')
+      loading.value = false
+      return
+    }
+    auth
+      .register({
+        username: form.username,
+        email: form.email,
+        password: form.password,
+        confirmPassword: form.confirm,
+        code: form.code
+      })
+      .then(() => {
+        ElMessage.success({ message: '注册成功！', type: 'success', duration: 2000 })
+        setTimeout(() => router.push({ path: '/login' }), 1500)
+      })
+      .catch((err) => {
+        ElMessage.error(err.message || '注册失败，请重试')
+      })
+      .finally(() => {
+        loading.value = false
+      })
   })
 }
 </script>

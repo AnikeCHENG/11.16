@@ -35,7 +35,8 @@
         <p class="auth-sub">欢迎回到校园二手交易平台</p>
       </header>
 
-      <el-form :model="form" :rules="rules" ref="loginForm" class="auth-form stagger">
+      <!-- DEF-02：真实 submit 按钮 + @submit.prevent，输入框内按回车即可登录（原按钮是 type="button"，回车无效） -->
+      <el-form :model="form" :rules="rules" ref="loginForm" class="auth-form stagger" @submit.prevent="onSubmit">
         <div class="field">
           <label class="field-label" for="login-username">用户名 / 学号</label>
           <div class="field-icon" aria-hidden="true">
@@ -98,10 +99,9 @@
         </div>
 
         <button
-          type="button"
+          type="submit"
           class="btn btn-primary btn-block"
           :disabled="loading"
-          @click="onSubmit"
         >
           {{ loading ? '登录中…' : '登录' }}
         </button>
@@ -170,45 +170,50 @@ onBeforeUnmount(() => {
 })
 
 function onSubmit() {
+  // 回车与点击走同一入口；请求进行中再按回车不重复提交
+  if (loading.value) return
+  // 同步置位：校验回调是异步的，若等到回调里再置 loading，快速连按两次回车会发两次请求
+  loading.value = true
   loginForm.value.validate((valid) => {
-    if (valid) {
-      loading.value = true
-      const username = form.username?.trim()
-      const password = form.password
-
-      auth.login({ username, password })
-        .then((res) => {
-          const token = res?.token
-          const user = res?.user
-          if (token && user) {
-            // 单独存一份 userId：部分页面（如 Messages.vue）需要直接取数值 ID，
-            // 每次解析 user JSON 既冗余又容易在解析失败时静默退化为 0
-            const uid = String(user.id ?? '')
-            if (form.remember) {
-              localStorage.setItem('token', token)
-              localStorage.setItem('user', JSON.stringify(user))
-              if (uid) localStorage.setItem('userId', uid)
-            } else {
-              sessionStorage.setItem('token', token)
-              sessionStorage.setItem('user', JSON.stringify(user))
-              if (uid) sessionStorage.setItem('userId', uid)
-            }
-            // 登录响应已由服务端认证，直接写入 store，守卫无需再请求 /api/auth/me
-            userStore.setFromLogin(user)
-            ElMessage.success({ message: '登录成功，欢迎回来！', type: 'success', duration: 2000 })
-            const redirect = route.query.redirect || '/'
-            router.push(redirect)
-          } else {
-            ElMessage.error('登录返回缺少 token 或用户信息')
-          }
-        })
-        .catch((err) => {
-          ElMessage.error(err.message || '登录失败，请检查用户名和密码')
-        })
-        .finally(() => {
-          loading.value = false
-        })
+    if (!valid) {
+      loading.value = false
+      return
     }
+    const username = form.username?.trim()
+    const password = form.password
+
+    auth.login({ username, password })
+      .then((res) => {
+        const token = res?.token
+        const user = res?.user
+        if (token && user) {
+          // 单独存一份 userId：部分页面（如 Messages.vue）需要直接取数值 ID，
+          // 每次解析 user JSON 既冗余又容易在解析失败时静默退化为 0
+          const uid = String(user.id ?? '')
+          if (form.remember) {
+            localStorage.setItem('token', token)
+            localStorage.setItem('user', JSON.stringify(user))
+            if (uid) localStorage.setItem('userId', uid)
+          } else {
+            sessionStorage.setItem('token', token)
+            sessionStorage.setItem('user', JSON.stringify(user))
+            if (uid) sessionStorage.setItem('userId', uid)
+          }
+          // 登录响应已由服务端认证，直接写入 store，守卫无需再请求 /api/auth/me
+          userStore.setFromLogin(user)
+          ElMessage.success({ message: '登录成功，欢迎回来！', type: 'success', duration: 2000 })
+          const redirect = route.query.redirect || '/'
+          router.push(redirect)
+        } else {
+          ElMessage.error('登录返回缺少 token 或用户信息')
+        }
+      })
+      .catch((err) => {
+        ElMessage.error(err.message || '登录失败，请检查用户名和密码')
+      })
+      .finally(() => {
+        loading.value = false
+      })
   })
 }
 </script>
