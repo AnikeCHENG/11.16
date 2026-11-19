@@ -34,6 +34,9 @@
         </div>
 
         <div class="info">
+          <!-- 标题/价格/元信息此前直接压在深色壁纸上（深色字 + 深色背景），
+               桌面与 375px 实测几乎不可读；与下方各信息块统一放进卡片 -->
+          <section class="card block info-head">
           <span class="badge" :class="getStatusClass(product.status)">{{ getStatusText(product.status) }}</span>
 
           <h1 class="title">{{ product.title }}</h1>
@@ -74,6 +77,7 @@
               {{ conditionLabel(product.conditionLevel) }}
             </span>
           </div>
+          </section>
 
           <!-- 瑕疵说明单独成块：这是买家判断值不值钱的关键信息，不能埋在描述里 -->
           <section class="card block flaw-block" :class="{ 'flaw-block--free': isFlawFree }">
@@ -662,6 +666,8 @@ onMounted(() => {
 
 .info { display: flex; flex-direction: column; gap: var(--space-4); }
 .title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; line-height: var(--leading-tight); }
+.info-head { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+.info-head .title { color: var(--text); overflow-wrap: anywhere; }
 .price { display: flex; align-items: baseline; gap: 4px; color: var(--accent); }
 .price-symbol { font-size: var(--text-lg); font-weight: var(--weight-semibold); }
 .price-value { font-size: var(--text-4xl); font-weight: var(--weight-semibold); letter-spacing: -0.03em; }
@@ -714,7 +720,9 @@ onMounted(() => {
 .actions .btn { height: 46px; }
 
 @media (max-width: 900px) {
-  .detail { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr)：默认 1fr 的最小值是内容宽度，375px 下卡片被撑出视口右侧被裁切 */
+  .detail { grid-template-columns: minmax(0, 1fr); }
+  .gallery, .info { min-width: 0; }
   .gallery { position: static; }
   .title { font-size: var(--text-xl); }
   .price-value { font-size: var(--text-3xl); }
