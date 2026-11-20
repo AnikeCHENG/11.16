@@ -128,6 +128,49 @@ class AdminStatsServiceTest {
     }
 
     @Test
+    @DisplayName("首页公开统计：注册用户全量计数，在售商品与已完成订单按枚举 code 过滤")
+    void publicHomeStatsUsesRealCountsAndEnumCodes() {
+        when(userRepository.selectCount(null)).thenReturn(42L);
+        when(productRepository.selectCount(any())).thenReturn(7L);
+        when(orderRepository.selectCount(any())).thenReturn(9L);
+
+        Map<String, Long> stats = service.publicHomeStats();
+
+        assertThat(stats)
+                .containsEntry("registeredUserCount", 42L)
+                .containsEntry("onSaleProductCount", 7L)
+                .containsEntry("completedOrderCount", 9L);
+
+        // 注册用户不按 status / role 过滤：直接传 null wrapper（逻辑删除由框架追加）
+        verify(userRepository).selectCount(null);
+
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper> productCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(productRepository).selectCount(productCaptor.capture());
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<?> productWrapper =
+                (com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<?>) productCaptor.getValue();
+        assertThat(productWrapper.getSqlSegment()).contains("status");
+        assertThat(productWrapper.getParamNameValuePairs().values())
+                .containsExactly(ProductStatus.ON_SALE.getCode())
+                .doesNotContain(ProductStatus.OFF_SHELF.getCode(), ProductStatus.SOLD.getCode());
+
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper> orderCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(orderRepository).selectCount(orderCaptor.capture());
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<?> orderWrapper =
+                (com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<?>) orderCaptor.getValue();
+        assertThat(orderWrapper.getSqlSegment()).contains("status");
+        assertThat(orderWrapper.getParamNameValuePairs().values())
+                .containsExactly(OrderStatus.COMPLETED.getCode())
+                .doesNotContain(OrderStatus.PENDING_PAYMENT.getCode(),
+                        OrderStatus.PENDING_SHIPMENT.getCode(),
+                        OrderStatus.PENDING_RECEIPT.getCode(),
+                        OrderStatus.CANCELLED.getCode(),
+                        OrderStatus.REFUNDING.getCode(),
+                        OrderStatus.REFUNDED.getCode());
+    }
+
+    @Test
     @DisplayName("分类热度统计全部状态商品并输出中文标签，按数量倒序")
     void categoryHeatCountsAllStatusesAndLabels() {
         when(productRepository.selectList(any())).thenReturn(List.of(

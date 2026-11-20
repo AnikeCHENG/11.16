@@ -48,6 +48,27 @@ public class AdminStatsService {
     }
 
     /**
+     * 首页公开统计：注册用户数、在售商品数、已完成订单数。
+     *
+     * <p>注册用户不做任何 status / role 过滤：平台没有「活跃用户」总数口径
+     * （广场只取 Top3），封禁用户与管理员同样属于已注册账号。逻辑删除由
+     * MyBatis-Plus 自动追加 {@code deleted = 0}，无需手写。</p>
+     */
+    public Map<String, Long> publicHomeStats() {
+        Long registeredUserCount = userRepository.selectCount(null);
+        Long onSaleProductCount = productRepository.selectCount(
+                new QueryWrapper<Product>().eq("status", ProductStatus.ON_SALE.getCode()));
+        Long completedOrderCount = orderRepository.selectCount(
+                new QueryWrapper<Order>().eq("status", OrderStatus.COMPLETED.getCode()));
+
+        Map<String, Long> result = new LinkedHashMap<>();
+        result.put("registeredUserCount", registeredUserCount);
+        result.put("onSaleProductCount", onSaleProductCount);
+        result.put("completedOrderCount", completedOrderCount);
+        return result;
+    }
+
+    /**
      * 平台财务概览：累计成交额、手续费总额、已支付订单数，以及按月手续费趋势。
      */
     public Map<String, Object> finance() {

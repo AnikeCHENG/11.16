@@ -101,16 +101,16 @@
 
         <dl class="hero-stats">
           <div class="stat">
-            <dt class="stat-label">活跃用户</dt>
-            <dd class="stat-value">2,580</dd>
+            <dt class="stat-label">注册用户</dt>
+            <dd class="stat-value">{{ formatHeroStat(heroStats.registeredUserCount) }}</dd>
           </div>
           <div class="stat">
             <dt class="stat-label">在售商品</dt>
-            <dd class="stat-value">1,245</dd>
+            <dd class="stat-value">{{ formatHeroStat(heroStats.onSaleProductCount) }}</dd>
           </div>
           <div class="stat">
             <dt class="stat-label">成交订单</dt>
-            <dd class="stat-value">8,920</dd>
+            <dd class="stat-value">{{ formatHeroStat(heroStats.completedOrderCount) }}</dd>
           </div>
         </dl>
       </section>
@@ -310,7 +310,9 @@ import VideoBackground from '../components/VideoBackground.vue'
 import { ref, onMounted, nextTick } from 'vue'
 import { getProductList, searchProducts } from '../api/product'
 import { getDashboardStats } from '../api/dashboard'
+import { getPublicStats } from '../api/stats'
 import { firstImage } from '../utils/images'
+import { formatHeroStat } from '../utils/publicStats'
 
 const router = useRouter()
 // 购物车角标已由 AppNavbar 统一持有（useCartStore 是唯一数据源），
@@ -505,6 +507,28 @@ async function loadDashboard() {
   }
 }
 
+/** 首页 Hero 三个平台总数：来自公开接口，失败时保持空值以便显示「—」，不回填假数据 */
+const heroStats = ref({
+  registeredUserCount: undefined,
+  onSaleProductCount: undefined,
+  completedOrderCount: undefined,
+})
+
+async function loadPublicStats() {
+  try {
+    const res = await getPublicStats()
+    if (res.code === 200 && res.data) {
+      heroStats.value = {
+        registeredUserCount: res.data.registeredUserCount,
+        onSaleProductCount: res.data.onSaleProductCount,
+        completedOrderCount: res.data.completedOrderCount,
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load public stats:', e)
+  }
+}
+
 const cards = ref([
   { title: '待售商品', value: 0, icon: 'shopping', color: '#ff7a45' },
   { title: '待处理订单', value: 0, icon: 'order', color: '#36b37e' },
@@ -568,6 +592,7 @@ onMounted(() => {
   loadSearchHistory()
   loadProducts()
   loadDashboard()
+  loadPublicStats()
 })
 
 function getDay(time) {
