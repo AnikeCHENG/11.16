@@ -15,12 +15,12 @@
               <div class="avatar-ring"></div>
             </div>
             <div class="user-badges">
-              <span class="badge verified">
+              <span class="badge" :class="verificationClass">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                   <polyline points="22 4 12 14.01 9 11.01"/>
                 </svg>
-                已认证
+                {{ verificationLabel }}
               </span>
               <span class="badge level">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -45,14 +45,14 @@
                 </svg>
                 <span>{{ userInfo.location || '未设置' }}</span>
               </div>
-              <div class="meta-item">
+              <div v-if="userInfo.joinDate" class="meta-item">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                   <line x1="16" y1="2" x2="16" y2="6"/>
                   <line x1="8" y1="2" x2="8" y2="6"/>
                   <line x1="3" y1="10" x2="21" y2="10"/>
                 </svg>
-                <span>加入于 {{ userInfo.joinDate || '2025年' }}</span>
+                <span>加入于 {{ userInfo.joinDate }}</span>
               </div>
             </div>
           </div>
@@ -824,6 +824,7 @@ import { uploadImage } from '../api/upload'
 import { getSessionUserId, getSessionUsername } from '../utils/session'
 import { firstImage } from '../utils/images'
 import { categoryLabel, loadCategories } from '../utils/categories'
+import { formatJoinDate, verificationStatusLabel } from '../utils/profileDisplay'
 
 const router = useRouter()
 function go(path) { router.push(path) }
@@ -842,7 +843,7 @@ const userInfo = ref({
   studentVerified: false,
   qq: '',
   wechat: '',
-  joinDate: '2025年1月',
+  joinDate: '',
   level: '青铜用户'
 })
 
@@ -1042,6 +1043,19 @@ const shotStatus = ref(null)
 /** 本地预览用的 objectURL（截图存于私有目录，没有可访问的 URL） */
 const shotPreviewUrl = ref('')
 
+/** 徽章文案：已认证优先，其次待审核，否则未认证；不写死任何状态 */
+const verificationLabel = computed(() => verificationStatusLabel({
+  studentVerified: userInfo.value.studentVerified,
+  shotStatus: shotStatus.value
+}))
+
+/** 三种状态各用一套配色：已认证沿用原来的绿色 .badge.verified */
+const verificationClass = computed(() => {
+  if (userInfo.value.studentVerified === true) return 'verified'
+  if (shotStatus.value?.status === 'pending') return 'pending'
+  return 'unverified'
+})
+
 /** 入学年份下拉：2000 ~ 当前年份 */
 const enrollmentYearOptions = computed(() => {
   const now = new Date().getFullYear()
@@ -1195,6 +1209,8 @@ async function loadUserProfile() {
       userInfo.value.studentVerified = data.studentVerified === true
       userInfo.value.studentNo = data.studentNo || ''
       userInfo.value.realName = data.realName || ''
+      // 加入时间来自 users.created_time；缺失或非法时为空，模板整行隐藏
+      userInfo.value.joinDate = formatJoinDate(data.createdTime)
       // 余额由后端 /profile 返回，收银台也依赖它判断「余额支付」是否够用
       stats.value.balance = Number(data.balance) || 0
     }
@@ -3324,6 +3340,8 @@ onMounted(() => {
 .profile-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-8); gap: var(--space-8); }
 .badge { border-radius: var(--radius-full); }
 .badge.verified { background: var(--accent-soft); color: var(--accent); }
+.badge.pending { background: var(--warning-soft); color: var(--warning); }
+.badge.unverified { background: var(--surface-3); color: var(--text-3); }
 .badge.level { background: var(--warning-soft); color: var(--warning); }
 .user-name { font-size: var(--text-2xl); color: var(--text); font-weight: var(--weight-semibold); letter-spacing: -0.02em; }
 .user-bio { color: var(--text-2); }

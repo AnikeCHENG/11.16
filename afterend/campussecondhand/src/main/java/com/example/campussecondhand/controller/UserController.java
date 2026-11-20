@@ -164,6 +164,9 @@ public class UserController {
             profile.put("wechat", user.getWechat() != null ? user.getWechat() : "");
             profile.put("studentNo", user.getStudentNo() != null ? user.getStudentNo() : "");
             profile.put("realName", user.getRealName() != null ? user.getRealName() : "");
+            // 注册时间供资料页展示真实「加入于 YYYY年M月」；
+            // 历史数据可能为 null，原样带出由前端自行隐藏，不在这里编造日期。
+            profile.put("createdTime", user.getCreatedTime());
             // 认证状态此前只补了 studentNo / realName，漏了这个布尔字段，
             // 而 Profile.vue 读的是 data.isStudentVerified → undefined === true 恒为 false，
             // 于是认证成功后一刷新页面，徽章消失、认证表单重新出现，

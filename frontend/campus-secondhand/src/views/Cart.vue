@@ -438,7 +438,10 @@ onMounted(loadCart)
     -webkit-box-orient: vertical;
     white-space: normal;
     line-height: 1.4;
-    overflow-wrap: anywhere;
+    /* 中文短语整体换行，避免「时令食谱电子书全 / 新」这种断字；
+       keep-all + break-word 只在长英文/URL 无法放下时才断。 */
+    word-break: keep-all;
+    overflow-wrap: break-word;
   }
 
   .cart-remove {
