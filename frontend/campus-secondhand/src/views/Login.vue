@@ -132,7 +132,7 @@ const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const loginForm = ref(null)
-// 仅 Android App 显示「服务器地址」设置；浏览器里不渲染
+// 仅原生壳（Android App / Windows 桌面端）显示「服务器地址」设置；浏览器里不渲染
 const nativeApp = isNativeApp()
 const loading = ref(false)
 const showPassword = ref(false)

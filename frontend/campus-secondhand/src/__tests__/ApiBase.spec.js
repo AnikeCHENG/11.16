@@ -5,6 +5,8 @@ import {
   assetUrl,
   getSavedServerUrl,
   installUploadsRewriter,
+  isElectronShell,
+  isNativeApp,
   normalizeServerUrl,
   saveServerUrl,
   SERVER_URL_KEY
@@ -25,6 +27,11 @@ describe('apiBase：后端地址配置', () => {
     expect(normalizeServerUrl('ftp://x')).toBe('')
     expect(normalizeServerUrl('http://x/?a=1')).toBe('')
     expect(normalizeServerUrl('')).toBe('')
+  })
+
+  it('jsdom / 浏览器里 isNativeApp、isElectronShell 均为 false', () => {
+    expect(isNativeApp()).toBe(false)
+    expect(isElectronShell()).toBe(false)
   })
 
   it('浏览器里忽略 localStorage 中的运行时地址（只在原生 App 生效）', () => {

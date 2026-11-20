@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 
 /**
- * 后端地址的唯一出处（Web 与 Android 安装包共用）。
+ * 后端地址的唯一出处（Web、Android 安装包与 Windows 桌面端共用）。
  *
  * <p><b>为什么需要：</b>Web 端靠同源相对路径 `/api`、`/uploads`，由 Vite 代理或
  * 反向代理转发到后端。打包进 Android（Capacitor）后，页面跑在 WebView 的
@@ -9,8 +9,8 @@ import { Capacitor } from '@capacitor/core'
  *
  * <p>后端地址（origin）的优先级：</p>
  * <ol>
- *   <li>仅原生 App：登录页「服务器地址」里保存的值（localStorage `apiServerUrl`），
- *       现场演示换了网络不必重新打包；</li>
+ *   <li>仅原生壳（Android App / Electron 桌面端）：登录页「服务器地址」里保存的值
+ *       （localStorage `apiServerUrl`），现场演示换了网络不必重新打包；</li>
  *   <li>构建时环境变量 `VITE_API_BASE_URL`（例如 `http://192.168.1.20:8080`）；</li>
  *   <li>都没有时为空串 —— 与以前完全一样，走相对路径。Web 构建不设该变量即可。</li>
  * </ol>
@@ -20,9 +20,21 @@ import { Capacitor } from '@capacitor/core'
 
 export const SERVER_URL_KEY = 'apiServerUrl'
 
-/** 是否运行在 Capacitor 原生壳里（浏览器、单测里都是 false） */
+/** 是否运行在 Electron 桌面壳里（浏览器、单测里都是 false） */
+export function isElectronShell() {
+  try {
+    if (typeof window !== 'undefined' && window.campusDesktop) return true
+    if (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)) return true
+  } catch {
+    // ignore
+  }
+  return false
+}
+
+/** 是否运行在原生壳里（Capacitor Android 或 Electron 桌面端；浏览器、单测里都是 false） */
 export function isNativeApp() {
   try {
+    if (isElectronShell()) return true
     return Capacitor.isNativePlatform()
   } catch {
     return false
@@ -48,7 +60,7 @@ export function normalizeServerUrl(raw) {
   }
 }
 
-/** 运行时覆盖值（仅原生 App 生效） */
+/** 运行时覆盖值（仅原生壳生效：Android / 桌面端） */
 export function getSavedServerUrl() {
   if (!isNativeApp()) return ''
   try {

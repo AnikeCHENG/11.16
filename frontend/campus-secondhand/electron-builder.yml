@@ -1,0 +1,39 @@
+appId: com.campus.secondhand.desktop
+productName: 校园二手交易平台
+copyright: Copyright © 第三组
+directories:
+  output: release
+  buildResources: electron
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+extraMetadata:
+  main: electron/main.cjs
+asar: true
+executableName: campus-secondhand
+artifactName: campus-secondhand-v${version}-${os}-${arch}.${ext}
+win:
+  icon: electron/icon.ico
+  # 默认只打 portable 与 zip。NSIS 安装包在 Linux 上需要 Wine（本环境仓库无 wine 包，未作为默认目标）。
+  # 已安装 Wine 时可额外执行：npx electron-builder --win nsis --x64
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+portable:
+  artifactName: campus-secondhand-v${version}-win-x64-portable.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: campus-secondhand-v${version}-win-x64-setup.${ext}
+linux:
+  icon: electron/icon-512.png
+  category: Office
+  target:
+    - target: dir
+      arch:
+        - x64

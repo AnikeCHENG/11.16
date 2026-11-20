@@ -35,6 +35,7 @@
 | 路由 | Vue Router | 4.6 |
 | 测试 | Vitest + Playwright | - |
 | 移动端打包 | Capacitor（Android） | 8.6 |
+| Windows 桌面端 | Electron + electron-builder | 见 package.json |
 
 ---
 
@@ -227,6 +228,39 @@ VITE_API_BASE_URL=https://api.example.com npm run apk:debug
 
 安装：把 apk 传到手机，在系统设置里允许“安装未知来源应用”后点击安装；或 `adb install -r app-debug.apk`。
 **App 只是客户端，必须能访问到正在运行的后端**，否则登录页会提示网络错误——此时在「服务器地址」里改成可达的地址即可。
+
+### 7. Windows 桌面端
+
+桌面端用 Electron 包一层现有的 Vue PC/Web 界面（`frontend/campus-secondhand/electron/`），打包后是普通的 Windows x64 窗口程序，标题为「校园二手交易平台」，最小窗口约 1024×700。生产包通过本机回环 HTTP 加载 `dist/`（保留 Vue Router 的 history 模式，不使用 `file://`）。页面本身与浏览器里的宽屏布局相同。
+
+**后端地址怎么生效**（与 Android 安装包共用 `src/utils/apiBase.js`，优先级从高到低）：
+
+1. 登录页底部「服务器地址 · 修改」里保存的地址（只在原生壳里显示：Android App 或本桌面端；存于本机 localStorage，可「测试连接」，改完自动重新加载；「恢复默认」回到打包时的地址）；
+2. 构建时的 `VITE_API_BASE_URL`（`.env.desktop` 里默认 `http://127.0.0.1:8080`，即本机后端）；
+3. 都没有时为空：走相对路径 `/api`、`/uploads`。**普通 Web 构建不设置该变量，行为与以前完全一致。**
+
+桌面端只是客户端，必须能访问到正在运行的 Spring Boot 后端，否则登录页会提示网络错误——此时在「服务器地址」里改成电脑能访问到的地址即可（例如同一局域网的 `http://192.168.1.20:8080`）。
+
+**环境要求**：Node 22+（与前端一致）。在 Linux 上交叉编译 Windows 包时，便携版（portable）和 zip 一般可直接打出；NSIS 安装包还需要 Wine。本仓库的 `electron:build:win` 默认只打 portable 与 zip。
+
+```bash
+cd frontend/campus-secondhand
+# 开发：先在本目录启动 Vite（npm run dev，默认 :5173），再开桌面窗口（开发模式走 Vite 代理，不必写死后端地址）
+npm run dev
+npm run electron:dev
+# 打包 Windows x64（默认后端 http://127.0.0.1:8080）
+npm run electron:build:win
+# 现场演示：把打包时的默认地址改成可达的后端
+VITE_API_BASE_URL=http://192.168.1.20:8080 npm run electron:build:win
+# 产物目录 release/（已 gitignore，不入库），典型文件名：
+#   campus-secondhand-v1.1.0-win-x64-portable.exe
+#   campus-secondhand-v1.1.0-win-x64.zip
+# 若本机已安装 Wine，可额外打 NSIS 安装包：
+# npx electron-builder --win nsis --x64
+#   产物：campus-secondhand-v1.1.0-win-x64-setup.exe
+```
+
+> `npm run electron:build:win` 会用 desktop 模式覆盖 `dist/`；之后要部署 Web 版请重新执行 `npm run build`。本机 Linux 冒烟可执行 `npm run electron:build:linux`，产物在 `release/linux-unpacked/`。
 
 ### 安全相关的默认行为
 
