@@ -59,7 +59,7 @@ onBeforeUnmount(() => clearTimeout(timer))
 .cart-toast {
   position: fixed;
   left: 50%;
-  bottom: 96px;
+  bottom: calc(96px + var(--safe-bottom, 0px));
   z-index: 2000;
   display: flex;
   align-items: center;

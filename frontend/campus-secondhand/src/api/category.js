@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE || '/api'
+import { API_BASE as BASE } from '@/utils/apiBase'
 
 /**
  * 公开分类列表（只返回启用项，按后台维护的排序）。

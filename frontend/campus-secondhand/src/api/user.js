@@ -5,7 +5,7 @@
 // 具体资源段。此前写成 `VITE_API_BASE || '/api/user'`，一旦 .env 里设置了
 // `/api`，`/profile` 就变成 `/api/profile`（后端真实路径是 `/api/user/profile`），
 // 个人资料、余额、认证状态全部 404。</p>
-const API_BASE = import.meta.env.VITE_API_BASE || '/api'
+import { API_BASE } from '@/utils/apiBase'
 const BASE = `${API_BASE}/user`
 
 async function request(path, options = {}) {

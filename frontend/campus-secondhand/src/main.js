@@ -12,7 +12,9 @@ import './assets/theme.css'
 import './assets/glass.css'
 import './assets/auth.css'
 import './assets/reveal.css'
+import './assets/safe-area.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import { installUploadsRewriter } from './utils/apiBase'
 
 const app = createApp(App)
 
@@ -29,3 +31,6 @@ app.use(ElementPlus)
 app.directive('reveal', reveal)
 
 app.mount('#app')
+
+// 配置了后端地址（Android App）时，把 <img src="/uploads/..."> 指向后端；Web 构建为空操作
+installUploadsRewriter()

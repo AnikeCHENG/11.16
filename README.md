@@ -34,6 +34,7 @@
 | 状态管理 | Pinia | 3.0 |
 | 路由 | Vue Router | 4.6 |
 | 测试 | Vitest + Playwright | - |
+| 移动端打包 | Capacitor（Android） | 8.6 |
 
 ---
 
@@ -123,34 +124,41 @@ campus-secondhand/
 
 ### 环境要求
 
-- JDK 17+
-- Maven 3.x
-- MySQL 8.0+
-- Node.js 18+
-- npm / pnpm
+- JDK 17+（后端自带 Maven Wrapper，无需本机安装 Maven）
+- Node.js `^20.19.0 || >=22.12.0`
+- MySQL 8.0 + Redis 7（推荐用仓库根目录的 `docker-compose.yml` 一键启动）
 
-### 1. 数据库初始化
+> 数据库名是 **`campus_secondhand`**（旧版 README 写的 `waste_recycle_platform` 是错的）。
 
-```sql
-CREATE DATABASE waste_recycle_platform DEFAULT CHARACTER SET utf8mb4;
-```
-
-修改 `afterend/campussecondhand/src/main/resources/application.properties` 中的数据库连接信息：
-
-```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/waste_recycle_platform
-spring.datasource.username=root
-spring.datasource.password=your_password
-```
-
-### 2. 启动后端
+### 1. 启动 MySQL 与 Redis
 
 ```bash
-cd afterend/campussecondhand
-mvn spring-boot:run
+export DB_PASSWORD=你的口令            # PowerShell: $env:DB_PASSWORD = "你的口令"
+docker compose up -d
 ```
 
-后端服务运行在 `http://localhost:8080`
+首次启动会自动导入 `data-seed/campus_secondhand_dump_*.sql`（表结构 + 演示数据，已包含全部
+`migration-*.sql` 的结果）。不用 Docker 时，手工建库后导入同一个文件即可：
+
+```bash
+mysql -uroot -p -e "CREATE DATABASE campus_secondhand DEFAULT CHARACTER SET utf8mb4"
+mysql -uroot -p campus_secondhand < data-seed/campus_secondhand_dump_2026-11-16.sql
+```
+
+> 只有从**空库**起步、不导入 dump 时，才需要按 `AGENTS.md` 第 3 节手工执行 `migration-*.sql`。
+
+### 2. 配置并启动后端
+
+```bash
+cd afterend/campussecondhand/src/main/resources
+cp application-local.properties.example application-local.properties
+# 填写 DB_PASSWORD 与 JWT_SECRET（HS512，至少 64 字节随机串），邮件可留空（验证码/找回密码邮件将发不出）
+cd ../../..
+SPRING_PROFILES_ACTIVE=dev,local ./mvnw spring-boot:run      # Windows: $env:SPRING_PROFILES_ACTIVE="dev,local"; .\mvnw.cmd spring-boot:run
+```
+
+后端运行在 `http://localhost:8080`。`application.properties` 里只有占位符，
+**不激活 `local` profile 会因缺少 `JWT_SECRET` / `DB_PASSWORD` 启动失败**，这是刻意设计。
 
 ### 3. 启动前端
 
@@ -160,12 +168,72 @@ npm install
 npm run dev
 ```
 
-前端开发服务器运行在 `http://localhost:5173`，API 请求自动代理到后端 8080 端口。
+前端开发服务器运行在 `http://localhost:5173`，`/api` 与 `/uploads` 自动代理到后端 8080。
 
 ### 4. 访问
 
 - 用户端：`http://localhost:5173`
-- 管理后台：`http://localhost:5173/admin`（需要管理员账号）
+- 管理后台：`http://localhost:5173/admin`（需要 role=1 的管理员账号）
+
+### 5. 测试
+
+```bash
+# 后端（500+ 条；CampussecondhandApplicationTests 会真实启动上下文，需要 local profile 与运行中的 MySQL/Redis）
+cd afterend/campussecondhand
+SPRING_PROFILES_ACTIVE=dev,local ./mvnw test
+
+# 前端
+cd frontend/campus-secondhand
+npm run lint
+npm run test:unit -- --run
+npm run build
+
+# 端到端冒烟（需前后端已启动；账号走环境变量，不入库）
+npx playwright install chromium   # 首次
+E2E_ADMIN_USER=管理员账号 E2E_ADMIN_PASSWORD=口令 npm run test:e2e
+```
+
+### 6. Android 安装包（Capacitor）
+
+前端用 Capacitor 8 打包成 Android App（工程在 `frontend/campus-secondhand/android/`，包名
+`com.campus.secondhand`）。App 里的页面运行在 WebView 的 `http://localhost` 上，**不能**再用相对路径
+访问后端，所以安装包里必须写入一个手机能访问到的后端地址。
+
+**后端地址怎么生效**（`src/utils/apiBase.js`，优先级从高到低）：
+
+1. App 登录页底部「服务器地址 · 修改」里保存的地址（只在 App 里显示，存于本机 localStorage，可「测试连接」，
+   改完自动重新加载；「恢复默认」回到打包时的地址）——现场换网络不用重新打包；
+2. 构建时的 `VITE_API_BASE_URL`（`.env.android` 里默认 `http://10.0.2.2:8080`，即 Android 模拟器访问宿主机）；
+3. 都没有时为空：走相对路径 `/api`、`/uploads`。**Web 构建不设置该变量，行为与以前完全一致。**
+
+接口请求、上传以及 `/uploads/...` 图片都会使用这个地址。Android 已允许明文 HTTP
+（`android/app/src/main/res/xml/network_security_config.xml`），因为演示后端通常是 `http://局域网IP:8080`；
+正式上线换成 HTTPS 后应去掉这项放行。
+
+**环境要求**：Node 22+、JDK 21、Android SDK（platform 36、build-tools 35/36），并设置 `ANDROID_HOME`。
+
+```bash
+cd frontend/campus-secondhand
+# 默认地址（模拟器 → 本机后端）
+npm run apk:debug
+# 现场演示：手机和电脑连同一 Wi-Fi，用电脑的局域网 IP（后端需监听 0.0.0.0，防火墙放行 8080）
+VITE_API_BASE_URL=http://192.168.1.20:8080 npm run apk:debug
+# 已有公网后端
+VITE_API_BASE_URL=https://api.example.com npm run apk:debug
+# 产物：android/app/build/outputs/apk/debug/app-debug.apk（debug 签名，可直接安装）
+```
+
+> `npm run build:android` 会用 android 模式覆盖 `dist/`；之后要部署 Web 版请重新执行 `npm run build`。
+
+安装：把 apk 传到手机，在系统设置里允许“安装未知来源应用”后点击安装；或 `adb install -r app-debug.apk`。
+**App 只是客户端，必须能访问到正在运行的后端**，否则登录页会提示网络错误——此时在「服务器地址」里改成可达的地址即可。
+
+### 安全相关的默认行为
+
+- 登录失败频控：同一用户名 15 分钟内失败 5 次锁定 15 分钟（`app.login.*` 可调；IP 维度默认关闭，
+  因为经代理时所有用户来源 IP 相同）。
+- 管理端 `/api/admin/**` 由 `AdminAuthInterceptor` 校验角色；C 端写请求由 `AuthWriteInterceptor`
+  兜底校验登录，且携带 token 的读请求同样拦截已封禁账号。
 
 ---
 

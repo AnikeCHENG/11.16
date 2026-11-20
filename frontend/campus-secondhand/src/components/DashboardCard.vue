@@ -88,4 +88,21 @@ function handleClick() {
   font-size: var(--text-sm);
   color: var(--text-2);
 }
+
+@media (max-width: 640px) {
+  .stat-card {
+    align-items: flex-start;
+    gap: 10px;
+    min-height: 104px;
+    padding: 14px;
+  }
+  .stat-icon { width: 34px; height: 34px; font-size: 18px; }
+  .stat-meta { min-width: 0; }
+  /* 中文短语整体换行，避免「待处理订 / 单」这种硬断字 */
+  .stat-title {
+    line-height: 1.35;
+    word-break: keep-all;
+    overflow-wrap: normal;
+  }
+}
 </style>

@@ -54,6 +54,8 @@ class AuthControllerMeContractTest {
     private EmailService emailService;
     @Mock
     private UserService userService;
+    @Mock
+    private com.example.campussecondhand.service.LoginAttemptService loginAttemptService;
     @InjectMocks
     private AuthController controller;
 

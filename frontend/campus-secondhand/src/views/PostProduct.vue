@@ -325,8 +325,8 @@ onMounted(() => {
 
 .post-main { max-width: 760px; }
 .page-head { margin-bottom: var(--space-6); }
-.page-title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; }
-.page-sub { margin-top: var(--space-1); color: var(--text-2); font-size: var(--text-sm); }
+.page-title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; color: rgba(255, 255, 255, 0.92); }
+.page-sub { margin-top: var(--space-1); color: rgba(255, 255, 255, 0.64); font-size: var(--text-sm); }
 .post-form { display: flex; flex-direction: column; gap: var(--space-5); }
 .section-title { font-size: var(--text-base); font-weight: var(--weight-semibold); margin-bottom: var(--space-5); }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
@@ -366,6 +366,38 @@ onMounted(() => {
 .modal-actions { display: flex; gap: var(--space-3); justify-content: center; }
 
 @media (max-width: 720px) {
+  .post-main {
+    padding: var(--space-5) var(--space-4)
+      calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
   .form-row { grid-template-columns: 1fr; }
+  .post-form { gap: var(--space-4); }
+  .chip { min-height: 44px; padding: 8px 16px; }
+
+  /* 移动端输入统一 16px，避免 iOS 聚焦自动放大 */
+  .field .input,
+  .field .select,
+  .field .textarea,
+  .price-input { font-size: 16px; }
+  .field .input,
+  .field .select { min-height: 44px; }
+
+  /* 计数器移到输入框下方右侧，不再压在 placeholder 上 */
+  .char-count {
+    position: static;
+    display: block;
+    margin-top: var(--space-1);
+    text-align: right;
+  }
+}
+
+@media (max-width: 480px) {
+  .form-actions {
+    flex-direction: column-reverse;
+    gap: var(--space-2);
+  }
+  .form-actions .btn { width: 100%; min-height: 44px; }
+  .modal-actions { flex-direction: column; }
+  .modal-actions .btn { width: 100%; min-height: 44px; }
 }
 </style>

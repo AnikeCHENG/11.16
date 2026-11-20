@@ -88,6 +88,49 @@ class AuthWriteInterceptorTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"GET", "HEAD"})
+    @DisplayName("带 token 的读请求：封禁账号 403，旧 token 读也立即失效")
+    void rejectsBannedUserOnRead(String method) throws Exception {
+        when(request.getMethod()).thenReturn(method);
+        when(jwtUtil.getUsernameFromToken("valid-token")).thenReturn("buyer1");
+        when(userRepository.findByUsername("buyer1")).thenReturn(Optional.of(user(0)));
+
+        assertThat(preHandle()).isFalse();
+        verify(response).setStatus(403);
+        assertThat(responseBody.toString()).contains("账户已被禁用");
+    }
+
+    @Test
+    @DisplayName("带 token 的读请求：正常用户放行")
+    void allowsActiveUserOnRead() throws Exception {
+        when(request.getMethod()).thenReturn("GET");
+        when(jwtUtil.getUsernameFromToken("valid-token")).thenReturn("buyer1");
+        when(userRepository.findByUsername("buyer1")).thenReturn(Optional.of(user(1)));
+
+        assertThat(preHandle()).isTrue();
+        verify(response, never()).setStatus(anyInt());
+    }
+
+    @Test
+    @DisplayName("读请求带无效 token：放行，由 Controller 决定是否 401（公开读接口不受影响）")
+    void allowsReadWithInvalidToken() throws Exception {
+        when(request.getMethod()).thenReturn("GET");
+        when(jwtUtil.getUsernameFromToken("valid-token")).thenReturn(null);
+
+        assertThat(preHandle()).isTrue();
+        verify(response, never()).setStatus(anyInt());
+    }
+
+    @Test
+    @DisplayName("OPTIONS 预检：即使带 token 也不查库")
+    void optionsNeverLooksUpUser() throws Exception {
+        when(request.getMethod()).thenReturn("OPTIONS");
+
+        assertThat(preHandle()).isTrue();
+        verify(userRepository, never()).findByUsername(anyString());
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"POST", "PUT", "PATCH", "DELETE"})
     @DisplayName("写请求没有 Authorization：401")
     void rejectsWriteWithoutHeader(String method) throws Exception {

@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE || '/api'
+import { API_BASE as BASE } from '@/utils/apiBase'
 
 async function request(path, options = {}) {
   const token = localStorage.getItem('token') || sessionStorage.getItem('token')

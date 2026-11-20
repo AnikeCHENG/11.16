@@ -9,18 +9,20 @@
     <main class="main-content">
       <div class="profile-header">
         <div class="profile-card">
+          <!-- 改了什么：把头像区与用户信息包进新的 profile-identity。为什么：移动端要横向紧凑排布，并单独测量这块高度 ≤160px。 -->
+          <div class="profile-identity">
           <div class="avatar-section">
             <div class="avatar-wrapper">
               <img :src="userInfo.avatar" alt="用户头像" class="avatar" />
               <div class="avatar-ring"></div>
             </div>
             <div class="user-badges">
-              <span class="badge verified">
+              <span class="badge" :class="verificationClass">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                   <polyline points="22 4 12 14.01 9 11.01"/>
                 </svg>
-                已认证
+                {{ verificationLabel }}
               </span>
               <span class="badge level">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -45,16 +47,17 @@
                 </svg>
                 <span>{{ userInfo.location || '未设置' }}</span>
               </div>
-              <div class="meta-item">
+              <div v-if="userInfo.joinDate" class="meta-item">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                   <line x1="16" y1="2" x2="16" y2="6"/>
                   <line x1="8" y1="2" x2="8" y2="6"/>
                   <line x1="3" y1="10" x2="21" y2="10"/>
                 </svg>
-                <span>加入于 {{ userInfo.joinDate || '2025年' }}</span>
+                <span>加入于 {{ userInfo.joinDate }}</span>
               </div>
             </div>
+          </div>
           </div>
           
           <div class="user-stats">
@@ -113,9 +116,14 @@
         >
           <!-- icon 为 null 时不渲染（学生认证 tab 没有对应图标组件） -->
           <component :is="tab.icon" v-if="tab.icon" />
-          <span>{{ tab.name }}</span>
+          <!-- 改了什么：给 tab 名称加 tab-label 类。为什么：移动端要单独把列表文字定为 15px 并占满剩余宽度。 -->
+          <span class="tab-label">{{ tab.name }}</span>
           <!-- count 为 null 表示该 tab 无计数概念（如学生认证是状态不是数量） -->
           <span v-if="tab.count !== null" class="tab-count">{{ tab.count }}</span>
+          <!-- 改了什么：在行尾加纯装饰右箭头。为什么：竖排菜单需要方向暗示，且不新增交互与脚本，桌面端会隐藏。 -->
+          <svg class="tab-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <polyline points="9 6 15 12 9 18" />
+          </svg>
         </button>
       </div>
 
@@ -824,6 +832,7 @@ import { uploadImage } from '../api/upload'
 import { getSessionUserId, getSessionUsername } from '../utils/session'
 import { firstImage } from '../utils/images'
 import { categoryLabel, loadCategories } from '../utils/categories'
+import { formatJoinDate, verificationStatusLabel } from '../utils/profileDisplay'
 
 const router = useRouter()
 function go(path) { router.push(path) }
@@ -842,7 +851,7 @@ const userInfo = ref({
   studentVerified: false,
   qq: '',
   wechat: '',
-  joinDate: '2025年1月',
+  joinDate: '',
   level: '青铜用户'
 })
 
@@ -1042,6 +1051,19 @@ const shotStatus = ref(null)
 /** 本地预览用的 objectURL（截图存于私有目录，没有可访问的 URL） */
 const shotPreviewUrl = ref('')
 
+/** 徽章文案：已认证优先，其次待审核，否则未认证；不写死任何状态 */
+const verificationLabel = computed(() => verificationStatusLabel({
+  studentVerified: userInfo.value.studentVerified,
+  shotStatus: shotStatus.value
+}))
+
+/** 三种状态各用一套配色：已认证沿用原来的绿色 .badge.verified */
+const verificationClass = computed(() => {
+  if (userInfo.value.studentVerified === true) return 'verified'
+  if (shotStatus.value?.status === 'pending') return 'pending'
+  return 'unverified'
+})
+
 /** 入学年份下拉：2000 ~ 当前年份 */
 const enrollmentYearOptions = computed(() => {
   const now = new Date().getFullYear()
@@ -1195,6 +1217,8 @@ async function loadUserProfile() {
       userInfo.value.studentVerified = data.studentVerified === true
       userInfo.value.studentNo = data.studentNo || ''
       userInfo.value.realName = data.realName || ''
+      // 加入时间来自 users.created_time；缺失或非法时为空，模板整行隐藏
+      userInfo.value.joinDate = formatJoinDate(data.createdTime)
       // 余额由后端 /profile 返回，收银台也依赖它判断「余额支付」是否够用
       stats.value.balance = Number(data.balance) || 0
     }
@@ -3322,8 +3346,12 @@ onMounted(() => {
 .main-content { max-width: var(--container); padding: calc(var(--header-h) + var(--space-6)) var(--space-6) var(--space-16); }
 
 .profile-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-8); gap: var(--space-8); }
+/* 改了什么：桌面端让 profile-identity 包装层透明（display:contents）。为什么：新增包裹只为移动端测量与横排，桌面仍沿用原四列网格结构。 */
+.profile-identity { display: contents; }
 .badge { border-radius: var(--radius-full); }
 .badge.verified { background: var(--accent-soft); color: var(--accent); }
+.badge.pending { background: var(--warning-soft); color: var(--warning); }
+.badge.unverified { background: var(--surface-3); color: var(--text-3); }
 .badge.level { background: var(--warning-soft); color: var(--warning); }
 .user-name { font-size: var(--text-2xl); color: var(--text); font-weight: var(--weight-semibold); letter-spacing: -0.02em; }
 .user-bio { color: var(--text-2); }
@@ -3344,6 +3372,8 @@ onMounted(() => {
 .tab-btn.active { background: var(--accent); color: #fff; }
 .tab-count { background: var(--surface-3); color: var(--text-2); }
 .tab-btn.active .tab-count { background: rgba(255,255,255,0.25); color: #fff; }
+/* 改了什么：桌面端默认隐藏 tab 行尾箭头。为什么：箭头只在移动端竖排菜单出现，避免影响现有桌面外观。 */
+.tab-chevron { display: none; }
 
 .listing-card, .favorite-card, .order-card, .history-card, .draft-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: none; }
 .listing-card:hover, .history-card:hover, .draft-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); transform: none; }
@@ -3530,4 +3560,341 @@ onMounted(() => {
   color: #c0392b;
   background: rgba(192, 57, 43, 0.1);
   border-radius: 4px;
+}
+
+/* 头像此前没有任何尺寸约束：上传图会按原图宽度撑满资料卡 */
+.avatar-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.avatar-wrapper {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+}
+.avatar-wrapper .avatar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--surface-3);
+}
+
+/* ============ 窄屏资料卡：按钮不换字、统计不挤在一起 ============ */
+@media (max-width: 768px) {
+  .main-content {
+    padding-top: var(--space-6);
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+    padding-bottom: calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
+  .profile-header { margin-bottom: var(--space-5); }
+  .profile-card {
+    gap: var(--space-5);
+    padding: var(--space-6) var(--space-4);
+    border-radius: var(--radius-lg);
+  }
+  .avatar-wrapper { width: 88px; height: 88px; }
+  .user-name { font-size: var(--text-2xl); overflow-wrap: anywhere; }
+  .user-bio, .user-meta { font-size: var(--text-sm); }
+  .user-meta { gap: var(--space-3); }
+
+  /* 五个统计等分一行；余额用稍小字号，避免「¥0.00」把格子撑开 */
+  .user-stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: end;
+    gap: var(--space-2);
+    width: 100%;
+  }
+  .stat-item { min-width: 0; }
+  .stat-value {
+    font-size: var(--text-lg);
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .stat-item:last-child .stat-value { font-size: var(--text-base); }
+  .stat-label { font-size: 12px; margin-top: 2px; white-space: nowrap; }
+
+  /* 两个操作按钮全宽上下排列，每个 44px 高，标签保持单行 */
+  .profile-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 10px;
+  }
+  .action-btn-primary,
+  .action-btn-secondary {
+    width: 100%;
+    min-height: 44px;
+    padding: 12px 16px;
+    white-space: nowrap;
+  }
+
+  .profile-tabs { gap: 6px; padding: 6px; }
+  .tab-btn {
+    min-height: 44px;
+    padding: 10px 12px;
+    white-space: nowrap;
+  }
+}
+
+/* ============ 移动端严格 8 点规范（max-width: 767px） ============ */
+@media (max-width: 767px) {
+  /* 改了什么：页面左右内边距固定 16px、顶部只留 16px、底部保留安全区。为什么：满足 375×812 的 16px 边距；顶栏已有 64px 占位，不再叠加 80px。 */
+  .main-content {
+    max-width: 100%;
+    padding-top: 16px;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-bottom: calc(24px + var(--safe-bottom, 0px));
+    overflow-x: hidden;
+  }
+
+  /* 改了什么：页面底色改为浅灰 #f5f5f5。为什么：白色卡片需要浅灰底来形成分组层次。 */
+  .profile-page {
+    background: #f5f5f5;
+  }
+
+  /* 改了什么：三大模块间距统一为 12px。为什么：满足模块纵向间距 12px 的规范，替代原先 24/40px。 */
+  .profile-header {
+    margin-bottom: 12px;
+  }
+  .profile-tabs {
+    margin-bottom: 12px;
+  }
+  .tab-content {
+    margin-top: 0;
+  }
+
+  /* 改了什么：资料卡改为纵向 flex、内边距 16px、模块间距 12px。为什么：让身份块、统计、按钮成为 12px 间隔的独立模块。 */
+  .profile-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 16px;
+    text-align: left;
+    background: #fff;
+    border: 1px solid #e6e6e3;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  /* 改了什么：新增 profile-identity 用网格做横向紧凑布局，头像 64px，徽章放到信息列下方。为什么：身份块要 avatar 在左、文字在右，且整体高度 ≤160px。 */
+  .profile-identity {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas:
+      "avatar info"
+      "avatar badges";
+    column-gap: 12px;
+    row-gap: 4px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+  }
+  .profile-identity .avatar-section {
+    display: contents;
+  }
+  .profile-identity .avatar-wrapper {
+    grid-area: avatar;
+    width: 64px;
+    height: 64px;
+    align-self: center;
+  }
+  .profile-identity .user-info {
+    grid-area: info;
+    min-width: 0;
+    text-align: left;
+  }
+  .profile-identity .user-badges {
+    grid-area: badges;
+    justify-content: flex-start;
+    gap: 4px;
+  }
+
+  /* 改了什么：昵称固定 18px，简介/元信息固定 12px。为什么：满足字号规范并压缩身份块高度。 */
+  .user-name {
+    font-size: 18px;
+    line-height: 1.25;
+    margin: 0 0 4px 0;
+    overflow-wrap: anywhere;
+  }
+  .user-bio {
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0 0 6px 0;
+    overflow-wrap: anywhere;
+  }
+  .user-meta {
+    gap: 8px 12px;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .meta-item {
+    font-size: 12px;
+    gap: 4px;
+  }
+  .meta-item svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  /* 改了什么：五个统计保持一行等分，标签固定 12px。为什么：统计独立成模块，辅助文字遵循 12px 规范。 */
+  .user-stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: end;
+    gap: 4px;
+    width: 100%;
+    margin-top: 0;
+  }
+  .stat-item {
+    min-width: 0;
+  }
+  .stat-value {
+    font-size: 16px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .stat-item:last-child .stat-value {
+    font-size: 14px;
+  }
+  .stat-label {
+    font-size: 12px;
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  .stat-divider {
+    display: none;
+  }
+
+  /* 改了什么：两个操作按钮全宽竖排、高度固定 42px、标签单行。为什么：满足按钮 40–44px、不换行、移动端整行堆叠的要求。 */
+  .profile-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+  }
+  .action-btn-primary,
+  .action-btn-secondary {
+    width: 100%;
+    height: 42px;
+    min-height: 42px;
+    padding: 0 16px;
+    font-size: 15px;
+    line-height: 1;
+    white-space: nowrap;
+    border-radius: 10px;
+    box-shadow: none;
+  }
+
+  /* 改了什么：tab 区改为白色卡片内的单列竖排列表。为什么：避免两列换行把标签挤断，并满足每行一条菜单。 */
+  .profile-tabs {
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 0;
+    padding: 0;
+    background: #fff;
+    border: 1px solid #e6e6e3;
+    border-radius: 12px;
+    box-shadow: none;
+    overflow: hidden;
+  }
+
+  /* 改了什么：每个 tab 行固定 48px 高、左对齐、图标 24px、文字 15px、右侧箭头 18px。为什么：满足菜单行 48–56px、图标 24×24、列表文字 15px 的规范。 */
+  .tab-btn {
+    flex: 0 0 auto;
+    width: 100%;
+    height: 48px;
+    min-height: 48px;
+    padding: 0 12px;
+    gap: 10px;
+    justify-content: flex-start;
+    text-align: left;
+    font-size: 15px;
+    border-radius: 0;
+    white-space: nowrap;
+  }
+  .tab-btn:not(:last-child) {
+    border-bottom: 1px solid #f0f0ee;
+  }
+  .tab-btn > svg:not(.tab-chevron) {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .tab-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 15px;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tab-count {
+    flex-shrink: 0;
+    min-width: 20px;
+    padding: 0 6px;
+    font-size: 12px;
+    line-height: 20px;
+    text-align: center;
+    border-radius: 10px;
+  }
+  .tab-chevron {
+    display: block;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-left: auto;
+    color: #c4c4bf;
+  }
+
+  /* 改了什么：内容卡片统一 12px 圆角、纯白底、1px 浅灰边、无阴影。为什么：浅色分组、降低阴影，且只作用于移动端。 */
+  .listing-card,
+  .favorite-card,
+  .order-card,
+  .history-card,
+  .draft-card,
+  .empty-state,
+  .verify-panel .card {
+    background: #fff;
+    border: 1px solid #e6e6e3;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+  .empty-state {
+    padding: 40px 16px;
+  }
+  /* 改了什么：移动端取消卡片悬停阴影与位移。为什么：触屏不需要浮起效果，也符合降低阴影的规范。 */
+  .listing-card:hover,
+  .favorite-card:hover,
+  .order-card:hover,
+  .history-card:hover,
+  .draft-card:hover {
+    box-shadow: none;
+    transform: none;
+  }
+
+  /* 改了什么：空态/列表页主按钮与重新提交按钮高度统一 42px。为什么：满足 40–44px 高度且不破坏原有布局。 */
+  .empty-btn,
+  .listing-resubmit {
+    height: 42px;
+    min-height: 42px;
+    padding: 0 20px;
+    white-space: nowrap;
+    border-radius: 10px;
+    box-shadow: none;
+  }
+  .listing-resubmit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
 }</style>

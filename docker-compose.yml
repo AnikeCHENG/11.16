@@ -1,0 +1,44 @@
+# 本地依赖一键启动：MySQL 8 + Redis 7。
+#
+#   docker compose up -d
+#
+# 首次启动时 MySQL 会自动导入 data-seed/ 下的完整库导出（表结构 + 演示数据，
+# 已包含全部 migration 的结果），无需再手工执行 src/main/resources/migration-*.sql。
+# 数据卷 campus-mysql-data 存在时不会重复导入；想重置演示数据：
+#
+#   docker compose down -v && docker compose up -d
+#
+# 口令通过环境变量提供，与后端 application-local.properties 中的 DB_PASSWORD 保持一致：
+#   export DB_PASSWORD=你的口令   （Windows PowerShell: $env:DB_PASSWORD = "..."）
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: campus-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?请先设置环境变量 DB_PASSWORD}
+      MYSQL_DATABASE: campus_secondhand
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - campus-mysql-data:/var/lib/mysql
+      - ./data-seed:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7
+    container_name: campus-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+volumes:
+  campus-mysql-data:

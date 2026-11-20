@@ -189,6 +189,12 @@ onBeforeUnmount(() => {
   position: fixed;
 }
 
+/* mode-section：放在区块右上角，避免压住右下角的统计数字（375px 下「8,920」） */
+.mode-section .video-toggle {
+  top: var(--space-4);
+  bottom: auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .video-toggle { display: none; }
 }

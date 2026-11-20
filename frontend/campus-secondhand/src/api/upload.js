@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE || '/api'
+import { API_BASE as BASE } from '@/utils/apiBase'
 
 /**
  * 图片上传（P1-12）。

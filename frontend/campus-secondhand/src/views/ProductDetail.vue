@@ -34,6 +34,9 @@
         </div>
 
         <div class="info">
+          <!-- 标题/价格/元信息此前直接压在深色壁纸上（深色字 + 深色背景），
+               桌面与 375px 实测几乎不可读；与下方各信息块统一放进卡片 -->
+          <section class="card block info-head">
           <span class="badge" :class="getStatusClass(product.status)">{{ getStatusText(product.status) }}</span>
 
           <h1 class="title">{{ product.title }}</h1>
@@ -74,6 +77,7 @@
               {{ conditionLabel(product.conditionLevel) }}
             </span>
           </div>
+          </section>
 
           <!-- 瑕疵说明单独成块：这是买家判断值不值钱的关键信息，不能埋在描述里 -->
           <section class="card block flaw-block" :class="{ 'flaw-block--free': isFlawFree }">
@@ -652,7 +656,7 @@ onMounted(() => {
 .detail-main { max-width: 1080px; }
 .detail { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-8); }
 
-.gallery { position: sticky; top: calc(var(--header-h) + var(--space-6)); height: fit-content; }
+.gallery { position: sticky; top: calc(var(--header-h) + var(--space-6) + var(--safe-top, 0px)); height: fit-content; }
 .main-image { width: 100%; aspect-ratio: 1; border-radius: var(--radius-lg); overflow: hidden; background: var(--surface-3); border: 1px solid var(--border); }
 .main-image img { width: 100%; height: 100%; object-fit: cover; }
 .thumbnails { display: flex; gap: var(--space-2); overflow-x: auto; margin-top: var(--space-3); }
@@ -662,6 +666,8 @@ onMounted(() => {
 
 .info { display: flex; flex-direction: column; gap: var(--space-4); }
 .title { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; line-height: var(--leading-tight); }
+.info-head { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+.info-head .title { color: var(--text); overflow-wrap: anywhere; }
 .price { display: flex; align-items: baseline; gap: 4px; color: var(--accent); }
 .price-symbol { font-size: var(--text-lg); font-weight: var(--weight-semibold); }
 .price-value { font-size: var(--text-4xl); font-weight: var(--weight-semibold); letter-spacing: -0.03em; }
@@ -680,9 +686,10 @@ onMounted(() => {
 .seller { display: flex; align-items: center; gap: var(--space-4); }
 .seller-avatar { width: 52px; height: 52px; border-radius: var(--radius-full); overflow: hidden; flex-shrink: 0; border: 1px solid var(--border); background: var(--surface-3); }
 .seller-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.seller-info { flex: 1; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.seller-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .seller-name { font-size: var(--text-base); font-weight: var(--weight-medium); display: inline-flex; align-items: center; gap: var(--space-1); }
-.seller-rating { display: inline-flex; align-items: center; gap: var(--space-2); }
+.seller-rating { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; max-width: 100%; }
+.seller .btn { flex-shrink: 0; white-space: nowrap; }
 .seller-rating__text { font-size: var(--text-sm); color: var(--text-2); }
 .seller-rating__text strong { color: var(--accent); font-weight: var(--weight-semibold); }
 .seller-rating__muted { font-size: var(--text-xs); color: var(--text-3); }
@@ -710,14 +717,48 @@ onMounted(() => {
 .report-link:hover:not(:disabled) { color: var(--danger); }
 .report-link:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); }
+.actions .btn { min-width: 0; }
 .actions .btn { height: 46px; }
 
 @media (max-width: 900px) {
-  .detail { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr)：默认 1fr 的最小值是内容宽度，375px 下卡片被撑出视口右侧被裁切 */
+  .detail { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .gallery, .info { min-width: 0; }
   .gallery { position: static; }
   .title { font-size: var(--text-xl); }
   .price-value { font-size: var(--text-3xl); }
+}
+
+/* DEF-01：卖家有评价时，星级 + 「好评率 100%（N 条评价）」是一整段不换行的 inline-flex，
+   .seller-info 又是 flex:1 且默认 min-width:auto，于是把「联系卖家」挤出视口 27px。
+   窄屏下评分允许换行，按钮另起一行占满宽度。 */
+@media (max-width: 480px) {
+  .detail-main {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+    padding-bottom: calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
+  .main-image { border-radius: var(--radius-lg); }
+  .block { padding: var(--space-4); }
+  .info-head { padding: var(--space-4); }
+  .meta-row { gap: var(--space-3); }
+  .seller { flex-wrap: wrap; gap: var(--space-3); }
+  .seller .btn {
+    flex: 1 1 100%;
+    justify-content: center;
+    min-height: 44px;
+  }
+  .actions { gap: var(--space-2); }
+  .actions .btn {
+    height: auto;
+    min-height: 44px;
+    padding: 8px var(--space-2);
+    font-size: var(--text-sm);
+  }
+  /* 主操作（立即购买）独占一整行，收藏/加购并排且不会被挤出屏幕 */
+  .actions .btn-primary { grid-column: 1 / -1; }
+  .report-link { min-height: 44px; padding: var(--space-2) 0; }
 }
 
 /* 收藏按钮：已收藏用 danger 色 + 实心爱心，附弹跳反馈 */

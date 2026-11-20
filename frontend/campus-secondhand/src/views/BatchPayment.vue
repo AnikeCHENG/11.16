@@ -425,7 +425,7 @@ onBeforeUnmount(() => clearInterval(timer))
 .pay-page { min-height: 100vh; background: var(--bg); }
 
 .pay-header {
-  position: sticky; top: 0; z-index: 100;
+  position: sticky; top: var(--safe-top, 0px); z-index: 100;
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .pay-header-inner {

@@ -16,6 +16,7 @@ import com.example.campussecondhand.service.PostService;
 import com.example.campussecondhand.service.ReviewService;
 import com.example.campussecondhand.service.StudentVerifyService;
 import com.example.campussecondhand.util.JwtUtil;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -138,6 +139,34 @@ class UserControllerStudentVerifiedContractTest {
         // 前端写的是 === true，Integer 1 会静默变成未认证
         assertThat(flag).isInstanceOf(Boolean.class);
         assertThat((Boolean) flag).isTrue();
+    }
+
+    @Test
+    @DisplayName("/profile 返回注册时间——资料页据此展示真实加入时间")
+    void profileExposesCreatedTime() {
+        User user = verifiedAdmin();
+        LocalDateTime createdTime = LocalDateTime.of(2026, 11, 20, 9, 30);
+        user.setCreatedTime(createdTime);
+        loginAs(user);
+
+        Map<String, Object> data = dataOf(controller.getProfile(AUTH));
+
+        assertThat(data).containsKey("createdTime");
+        assertThat(data.get("createdTime")).isEqualTo(createdTime);
+    }
+
+    @Test
+    @DisplayName("/profile 对缺失 createdTime 的旧数据返回 null，不编造日期")
+    void profileHandlesMissingCreatedTimeSafely() {
+        User user = unverifiedBuyer();
+        user.setCreatedTime(null);
+        loginAs(user);
+
+        Map<String, Object> data = dataOf(controller.getProfile(AUTH));
+
+        // 前端 formatJoinDate(null) 返回空串并隐藏整行，不能回退到 2025 年
+        assertThat(data).containsKey("createdTime");
+        assertThat(data.get("createdTime")).isNull();
     }
 
     @Test

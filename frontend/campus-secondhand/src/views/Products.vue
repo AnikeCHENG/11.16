@@ -862,8 +862,48 @@ watch(() => route.fullPath, () => {
 }
 
 @media (max-width: 720px) {
-  .products-grid { grid-template-columns: 1fr; }
-  .page-head { flex-direction: column; align-items: flex-start; }
+  .page-main {
+    padding: var(--space-5) var(--space-4)
+      calc(var(--space-12) + var(--safe-bottom, 0px));
+  }
+  .products-grid { grid-template-columns: 1fr; gap: var(--space-4); }
+  .page-head { flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+  .page-head .btn { min-height: 44px; }
+  .search-wrap { margin-bottom: var(--space-5); }
+  .search-bar { gap: var(--space-2); padding: 5px 6px 5px var(--space-3); }
+  .search-bar input { min-width: 0; font-size: 16px; /* 防止 iOS 聚焦缩放 */ }
+  .search-bar .btn-sm { min-height: 44px; padding: 0 var(--space-3); }
+  .clear-btn { width: 36px; height: 36px; flex-shrink: 0; }
+
+  .filter-toggle { min-height: 44px; }
+  .price-range { max-width: none; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+  .filter-actions .btn { min-height: 44px; }
+
+  .products-section { padding: var(--space-3); border-radius: var(--radius-lg); }
+  .product-info { padding: var(--space-4); }
+  .product-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .product-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    line-height: 1.45;
+  }
+  .product-meta { flex-wrap: wrap; }
   /* 背景/边框继承下方 .site-footer 的玻璃样式，这里只改间距 */
   .site-footer { margin-top: var(--space-12); }
 }
@@ -912,5 +952,12 @@ watch(() => route.fullPath, () => {
   .filters-panel .input,
   .filters-panel .textarea,
   .filters-panel .select { transition: none; }
+}
+
+/* 375px 实测分页条 385px 宽导致整页横向滚动：窄屏允许换行 */
+@media (max-width: 640px) {
+  .pager { max-width: 100%; overflow: hidden; }
+  .pager :deep(.el-pagination) { flex-wrap: wrap; justify-content: center; row-gap: 8px; }
+  .pager :deep(.el-pagination .el-pagination__total) { flex-basis: 100%; text-align: center; margin: 0; }
 }
 </style>

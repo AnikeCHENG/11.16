@@ -9,7 +9,8 @@
         </p>
       </header>
 
-      <el-form :model="form" :rules="rules" ref="resetForm" class="auth-form stagger">
+      <!-- K-11：真实 submit 按钮 + @submit.prevent，输入框内按回车即可提交（第一步发验证码 / 第二步重置密码） -->
+      <el-form :model="form" :rules="rules" ref="resetForm" class="auth-form stagger" @submit.prevent="onSubmit">
         <div class="field">
           <label class="field-label" for="reset-email">邮箱</label>
           <div class="email-row">
@@ -112,19 +113,17 @@
 
         <button
           v-if="!codeSent"
-          type="button"
+          type="submit"
           class="btn btn-primary btn-block"
           :disabled="sendingCode"
-          @click="onSendCode"
         >
           {{ sendingCode ? '发送中…' : '发送验证码' }}
         </button>
         <button
           v-else
-          type="button"
+          type="submit"
           class="btn btn-primary btn-block"
           :disabled="loading"
-          @click="onReset"
         >
           {{ loading ? '重置中…' : '重置密码' }}
         </button>
@@ -211,15 +210,31 @@ async function onSendCode() {
   }
 }
 
+/** 表单 submit（回车）统一入口：按当前步骤分发到发验证码或重置密码 */
+function onSubmit() {
+  if (codeSent.value) {
+    onReset()
+  } else {
+    onSendCode()
+  }
+}
+
 /** 第二步：校验验证码并写入新密码 */
 function onReset() {
+  // 请求进行中再按回车不重复提交
+  if (loading.value) return
+  // 同步置位：校验回调是异步的，若等到回调里再置 loading，快速连按两次回车会发两次请求
+  loading.value = true
   resetForm.value.validate((valid) => {
-    if (!valid) return
-    if (form.password !== form.confirm) {
-      ElMessage.error('两次输入的密码不一致')
+    if (!valid) {
+      loading.value = false
       return
     }
-    loading.value = true
+    if (form.password !== form.confirm) {
+      ElMessage.error('两次输入的密码不一致')
+      loading.value = false
+      return
+    }
     auth
       .resetPassword({
         email: form.email,

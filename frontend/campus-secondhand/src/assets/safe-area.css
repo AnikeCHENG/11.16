@@ -1,0 +1,32 @@
+/* =========================================================
+   安全区（刘海 / 状态栏 / 手势条）适配
+   ---------------------------------------------------------
+   index.html 声明了 viewport-fit=cover，页面会铺到状态栏与底部手势条下面。
+   Android App（Capacitor 8 SystemBars，insetsHandling=css）会注入
+   --safe-area-inset-*；旧版 WebView 的 env() 取值不可靠，所以优先用注入值，
+   其次 env()。普通浏览器里两者都是 0，布局与以前完全一样。
+   ========================================================= */
+:root {
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+}
+
+/* 内容整体让出安全区；fixed 元素（顶栏、弹层）各自处理 */
+#app {
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+/* 状态栏背板：滚动内容不会从状态栏图标下面透出来 */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--safe-top);
+  background: #0a1013;
+  z-index: 2500;
+  pointer-events: none;
+}

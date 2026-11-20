@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { API_BASE } from '@/utils/apiBase'
 
 /**
  * 管理端专用的 axios 实例。
@@ -24,7 +25,7 @@ const admin = axios.create({
   // 必须带 /admin 后缀。此前这里写的是 VITE_API_BASE || '/api'，
   // 而 20 处调用传的是 '/users'、'/stats' 这类子路径——请求全打到
   // C 端的 /api/users…，管理员满屏 404（"进不了管理后台"的根因之一）。
-  baseURL: `${import.meta.env.VITE_API_BASE || '/api'}/admin`,
+  baseURL: `${API_BASE}/admin`,
   timeout: 15000,
   // 实例级默认 JSON。AdminUsers / AdminProducts 的状态切换传的是裸数字
   // （admin.put(url, 1)），axios 对非对象载荷不会自动补 application/json，
@@ -57,6 +58,10 @@ admin.interceptors.response.use(
     return response
   },
   (error) => {
+    // silent：调用方自行在界面上展示失败原因（例如认证截图按 blob 取回失败），不再弹全局 toast
+    if (error.config?.silent) {
+      return Promise.reject(error)
+    }
     const status = error.response?.status
     const message =
       error.response?.data?.message ||

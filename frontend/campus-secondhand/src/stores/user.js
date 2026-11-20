@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { API_BASE } from '@/utils/apiBase'
 
 /**
  * 当前登录用户身份。
@@ -34,7 +35,7 @@ export const useUserStore = defineStore('user', {
         return null
       }
       try {
-        const res = await fetch('/api/auth/me', {
+        const res = await fetch(`${API_BASE}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` }
         })
         const data = await res.json().catch(() => null)

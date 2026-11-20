@@ -6,7 +6,7 @@
 // （开发环境 `/api`），本身不含资源段。此前这样写导致设置该变量后
 // 截图上传、学号认证、认证进度全部打到 `/api/student-verification/...`（404），
 // 用户点「选择文件」后上传失败，后台也永远收不到申请。</p>
-const API_BASE = import.meta.env.VITE_API_BASE || '/api'
+import { API_BASE } from '@/utils/apiBase'
 const USER_BASE = `${API_BASE}/user`
 const ORDER_BASE = import.meta.env.VITE_ORDER_BASE || `${API_BASE}/orders`
 

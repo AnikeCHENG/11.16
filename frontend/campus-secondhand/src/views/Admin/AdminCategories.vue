@@ -1,15 +1,13 @@
 <template>
   <div class="admin-categories">
-    <div class="page-head">
-      <div>
-        <h1>分类管理</h1>
+    <AdminPageHeader title="分类管理">
+      <template #subtitle>
         <p class="page-hint">
           这里的分类会直接出现在用户端「发布商品」下拉与「商品大厅」筛选里。
           <strong>标识</strong>创建后不可修改，商品按标识归属分类；改名只影响展示。
         </p>
-      </div>
-      <router-link to="/admin" class="back-link">返回控制面板</router-link>
-    </div>
+      </template>
+    </AdminPageHeader>
 
     <!-- 新增分类 -->
     <div class="category-form">
@@ -165,6 +163,7 @@
 </template>
 
 <script setup>
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import admin from '../../api/admin'
@@ -307,17 +306,7 @@ onMounted(fetchCategories)
   padding: 20px;
 }
 
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
-.back-link { color: #4CAF50; text-decoration: none; font-size: 14px; white-space: nowrap; }
-.back-link:hover { text-decoration: underline; }
-
-.admin-categories h1 {
-  font-size: 2rem;
-  color: #333;
-  margin: 0 0 8px;
-}
-
-.page-hint { margin: 0; color: #666; font-size: 13px; line-height: 1.6; max-width: 720px; }
+.page-hint { margin: 6px 0 0; color: #666; font-size: 13px; line-height: 1.6; max-width: 720px; }
 
 .category-form {
   background-color: #f9f9f9;
@@ -509,9 +498,7 @@ onMounted(fetchCategories)
 <!-- ===== 简约浅色主题覆盖 ===== -->
 <style scoped>
 .admin-categories { max-width: var(--container); padding: var(--space-6); }
-.admin-categories h1 { font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; color: var(--text); margin-bottom: var(--space-2); }
 .page-hint { color: var(--text-2); }
-.back-link { color: var(--accent); }
 .category-form, .category-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-5); margin-bottom: var(--space-5); box-shadow: none; }
 .category-form h3, .category-list h3 { font-size: var(--text-base); font-weight: var(--weight-semibold); color: var(--text); margin-bottom: var(--space-4); }
 .form-group label { color: var(--text-2); font-weight: var(--weight-medium); font-size: var(--text-sm); }

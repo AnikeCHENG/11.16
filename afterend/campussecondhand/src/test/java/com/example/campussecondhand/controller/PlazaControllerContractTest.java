@@ -9,6 +9,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CrossOrigin;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -91,5 +92,13 @@ class PlazaControllerContractTest {
         var resp = controller.activeUsers();
 
         assertThat(codeOf(resp)).isEqualTo(500);
+    }
+
+    @Test
+    @DisplayName("允许跨域：Android App 的页面源是 http://localhost，与其他控制器一致放行")
+    void allows_cross_origin_like_other_controllers() {
+        CrossOrigin cors = PlazaController.class.getAnnotation(CrossOrigin.class);
+        assertThat(cors).isNotNull();
+        assertThat(cors.origins()).containsExactly("*");
     }
 }

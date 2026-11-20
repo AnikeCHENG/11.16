@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">校园二手交易平台</string>
+    <string name="title_activity_main">校园二手交易平台</string>
+    <string name="package_name">com.campus.secondhand</string>
+    <string name="custom_url_scheme">com.campus.secondhand</string>
+</resources>
