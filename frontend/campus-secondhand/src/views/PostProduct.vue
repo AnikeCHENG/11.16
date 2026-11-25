@@ -125,6 +125,7 @@
           </ul>
         </section>
 
+        <p class="draft-hint">离开本页（含浏览器/应用内返回键）时会自动保存草稿，下次进入可继续编辑。</p>
         <div class="form-actions">
           <button type="button" class="btn btn-outline" @click="saveDraft">保存草稿</button>
           <button type="submit" class="btn btn-primary" :disabled="submitting">
@@ -153,8 +154,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { createProduct } from '../api/product'
 import { uploadImage } from '../api/upload'
 import { categoryOptions, loadCategories } from '../utils/categories'
@@ -279,6 +280,8 @@ async function handleSubmit() {
 function resetForm() {
   form.title = ''; form.category = ''; form.conditionLevel = null; form.flawDescription = ''; form.price = ''
   form.originalPrice = ''; form.description = ''; form.images = []
+  // 发布成功后清掉工作草稿，避免下次进入又恢复出已发布的旧内容
+  localStorage.removeItem('product_draft')
 }
 
 function saveDraft() {
@@ -290,12 +293,59 @@ function saveDraft() {
   alert('草稿已保存到草稿箱')
 }
 
+/** 表单里是否有值得保存的内容，避免把空白表单写进草稿 */
+function hasDraftContent() {
+  return Boolean(
+    String(form.title || '').trim() ||
+    form.category ||
+    form.conditionLevel !== null ||
+    String(form.flawDescription || '').trim() ||
+    form.price ||
+    form.originalPrice ||
+    String(form.description || '').trim() ||
+    (Array.isArray(form.images) && form.images.length)
+  )
+}
+
+/** 静默保存工作草稿（不弹窗），供返回/离开页面时自动调用 */
+function persistDraftSilently() {
+  // 已成功发布或正在提交时不再写草稿，避免留存无效数据
+  if (showSuccess.value || submitting.value) return
+  if (!hasDraftContent()) return
+  try {
+    localStorage.setItem('product_draft', JSON.stringify({ ...form, savedAt: Date.now() }))
+  } catch (e) {
+    console.warn('自动保存草稿失败', e)
+  }
+}
+
+function handleVisibilityChange() {
+  // Android 返回键/切到后台、桌面端最小化时路由离开不一定触发，这里兜底
+  if (document.visibilityState === 'hidden') persistDraftSilently()
+}
+
+// 需求：发布页填写中途返回时自动保存草稿（浏览器/应用内返回、路由跳转）
+onBeforeRouteLeave(() => {
+  persistDraftSilently()
+  return true
+})
+
 function continuePost() { showSuccess.value = false; resetForm() }
 
 onMounted(() => {
   loadCategories()
   const draft = localStorage.getItem('product_draft')
   if (draft) { try { Object.assign(form, JSON.parse(draft)) } catch { console.log('读取草稿失败') } }
+  // 兜底：刷新/关闭页面、切到后台时也保存草稿
+  window.addEventListener('beforeunload', persistDraftSilently)
+  window.addEventListener('pagehide', persistDraftSilently)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', persistDraftSilently)
+  window.removeEventListener('pagehide', persistDraftSilently)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
 
@@ -355,6 +405,7 @@ onMounted(() => {
 .tips-list li { position: relative; padding-left: var(--space-5); font-size: var(--text-sm); color: var(--text-2); }
 .tips-list li::before { content: ''; position: absolute; left: 0; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
+.draft-hint { margin: 0 0 var(--space-3); text-align: right; font-size: var(--text-xs); color: var(--text-3); }
 .form-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
 
 .overlay { position: fixed; inset: 0; z-index: 200; background: rgba(20,20,18,0.35); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
