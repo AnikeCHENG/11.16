@@ -257,12 +257,16 @@ npm run electron:build:win
 # 现场演示：把打包时的默认地址改成可达的后端
 VITE_API_BASE_URL=http://192.168.1.20:8080 npm run electron:build:win
 # 产物目录 release/（已 gitignore，不入库），典型文件名：
-#   campus-secondhand-v1.1.0-win-x64-portable.exe
-#   campus-secondhand-v1.1.0-win-x64.zip
+#   campus-secondhand-v1.1.1-win-x64-portable.exe
+#   campus-secondhand-v1.1.1-win-x64.zip
 # 若本机已安装 Wine，可额外打 NSIS 安装包：
 # npx electron-builder --win nsis --x64
-#   产物：campus-secondhand-v1.1.0-win-x64-setup.exe
+#   产物：campus-secondhand-v1.1.1-win-x64-setup.exe
 ```
+
+**已打包的桌面端**：Release [v1.1.1](https://github.com/AnikeCHENG/11.16/releases/tag/v1.1.1) 附件
+`campus-secondhand-v1.1.1-win-x64-portable.exe`（免安装单文件）与 `campus-secondhand-v1.1.1-win-x64.zip`（解压即用），
+由当前 `main` 打出，包含「发帖页离开自动保存草稿」修复。
 
 > `npm run electron:build:win` 会用 desktop 模式覆盖 `dist/`；之后要部署 Web 版请重新执行 `npm run build`。本机 Linux 冒烟可执行 `npm run electron:build:linux`，产物在 `release/linux-unpacked/`。
 
