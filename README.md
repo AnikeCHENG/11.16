@@ -226,6 +226,10 @@ VITE_API_BASE_URL=https://api.example.com npm run apk:debug
 
 > `npm run build:android` 会用 android 模式覆盖 `dist/`；之后要部署 Web 版请重新执行 `npm run build`。
 
+**已打包的安装包**：Release [v1.1.0](https://github.com/AnikeCHENG/11.16/releases/tag/v1.1.0) 附件
+`campus-secondhand-v1.1.0-debug.apk`（versionCode 3 / versionName 1.1.0，debug 签名，可直接安装，
+包含「发帖页离开自动保存草稿」等修复）。
+
 安装：把 apk 传到手机，在系统设置里允许“安装未知来源应用”后点击安装；或 `adb install -r app-debug.apk`。
 **App 只是客户端，必须能访问到正在运行的后端**，否则登录页会提示网络错误——此时在「服务器地址」里改成可达的地址即可。
 
